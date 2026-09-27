@@ -753,47 +753,64 @@ export default function App() {
                       </div>
 
                       {/* Custom Scrollable Parent Dropdown (Displays ~5 names at a time with side scrollbar & Timezone Sync) */}
-                      <div className="relative max-w-full sm:max-w-md w-full">
+                      <div className="relative max-w-full sm:max-w-2xl w-full">
                         <button
                           type="button"
                           onClick={() => setIsParentDropdownOpen(!isParentDropdownOpen)}
-                          className="bg-slate-100 hover:bg-slate-200/80 border border-gray-300 text-gray-900 text-xs sm:text-sm font-semibold rounded-xl px-4 py-2.5 flex items-center justify-between gap-2 w-full transition-colors cursor-pointer text-left shadow-xs"
+                          className="bg-slate-100 hover:bg-slate-200/80 border border-gray-300 text-gray-900 text-xs sm:text-sm font-semibold rounded-xl px-4 py-2.5 flex items-center justify-between gap-3 w-full transition-colors cursor-pointer text-left shadow-xs"
                         >
-                          <span className="truncate">
-                            {(() => {
-                              const current = parents.find(p => p.id === selectedParentId) || parents[0];
-                              if (!current) return 'Select Parent Persona';
-                              const count = current.bookedClassesCount ?? 0;
-                              const countText = `${count} ${count === 1 ? 'class' : 'classes'} booked`;
-                              return `${current.name} (${current.email} • ${current.timezone} • ${countText})`;
-                            })()}
-                          </span>
+                          {(() => {
+                            const current = parents.find(p => p.id === selectedParentId) || parents[0];
+                            if (!current) return <span className="truncate">Select Parent Persona</span>;
+                            const count = current.bookedClassesCount ?? 0;
+                            return (
+                              <div className="flex items-center justify-between gap-2.5 min-w-0 flex-1">
+                                <span className="truncate">
+                                  <span className="font-bold text-gray-900">{current.name}</span>{' '}
+                                  <span className="text-gray-500 text-xs font-normal">({current.email} • {current.timezone})</span>
+                                </span>
+                                <span className={`shrink-0 text-xs font-extrabold px-2.5 py-0.5 rounded-full border ${
+                                  count > 0 
+                                    ? 'bg-emerald-100 text-emerald-800 border-emerald-300' 
+                                    : 'bg-indigo-100 text-indigo-800 border-indigo-200'
+                                }`}>
+                                  {count} {count === 1 ? 'Class Booked' : 'Classes Booked'}
+                                </span>
+                              </div>
+                            );
+                          })()}
                           <ChevronDown size={16} className={`text-indigo-600 shrink-0 transition-transform duration-200 ${isParentDropdownOpen ? 'rotate-180' : ''}`} />
                         </button>
 
                         {isParentDropdownOpen && (
-                          <div className="absolute right-0 mt-2 w-full bg-white border border-gray-200 rounded-2xl shadow-xl z-40 max-h-52 overflow-y-auto p-1.5 space-y-0.5 border-t-2 border-t-indigo-600">
+                          <div className="absolute right-0 mt-2 w-full bg-white border border-gray-200 rounded-2xl shadow-xl z-40 max-h-56 overflow-y-auto p-1.5 space-y-1 border-t-2 border-t-indigo-600">
                             {parents.map((p) => {
                               const isSelected = p.id === selectedParentId;
                               const count = p.bookedClassesCount ?? 0;
-                              const countText = `${count} ${count === 1 ? 'class' : 'classes'} booked`;
                               return (
                                 <div
                                   key={p.id}
                                   onClick={() => handleSelectParent(p.id)}
-                                  className={`px-3 py-2.5 text-xs sm:text-sm rounded-xl flex items-center justify-between cursor-pointer transition-colors ${
+                                  className={`px-3.5 py-2.5 text-xs sm:text-sm rounded-xl flex items-center justify-between gap-3 cursor-pointer transition-colors ${
                                     isSelected
                                       ? 'bg-indigo-50 text-indigo-900 font-bold border border-indigo-100'
                                       : 'hover:bg-slate-50 text-gray-700 font-medium'
                                   }`}
                                 >
-                                  <div className="truncate pr-2">
+                                  <div className="truncate min-w-0 flex-1 pr-1">
                                     <span className="font-bold text-gray-900">{p.name}</span>{' '}
-                                    <span className="text-gray-500 text-xs font-normal">
-                                      ({p.email} • {p.timezone} • <span className="font-semibold text-indigo-600">{countText}</span>)
-                                    </span>
+                                    <span className="text-gray-500 text-xs font-normal">({p.email} • {p.timezone})</span>
                                   </div>
-                                  {isSelected && <Check size={15} className="text-indigo-600 shrink-0" />}
+                                  <div className="flex items-center gap-2 shrink-0">
+                                    <span className={`text-xs font-extrabold px-2.5 py-0.5 rounded-full border ${
+                                      count > 0 
+                                        ? 'bg-emerald-100 text-emerald-800 border-emerald-300' 
+                                        : 'bg-indigo-50 text-indigo-700 border-indigo-200'
+                                    }`}>
+                                      {count} {count === 1 ? 'Booked' : 'Booked'}
+                                    </span>
+                                    {isSelected && <Check size={15} className="text-indigo-600 shrink-0" />}
+                                  </div>
                                 </div>
                               );
                             })}
