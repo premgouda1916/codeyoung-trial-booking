@@ -299,7 +299,7 @@ codeyoung-trial-booking/
    ```bash
    npm run dev
    ```
-   *Frontend application will open at `http://localhost:5173`.*
+   *Frontend application will open at `http://localhost:3000` (or `http://localhost:5173`).*
 
 ---
 
