@@ -15,6 +15,7 @@ interface Parent {
   name: string;
   email: string;
   timezone: string;
+  bookedClassesCount?: number;
 }
 
 interface Slot {
@@ -199,6 +200,7 @@ export default function App() {
         fetchParentBookings(selectedParentId);
         fetchSlots();
         fetchMentors();
+        fetchParents();
       }
     } catch (err) {
       console.error('Error cancelling booking:', err);
@@ -349,6 +351,7 @@ export default function App() {
         setStatus('success');
         fetchSlots();
         fetchMentors();
+        fetchParents();
         fetchParentBookings(parentIdToUse);
       } else {
         // Rollback optimistic state on 409 Conflict
@@ -759,7 +762,10 @@ export default function App() {
                           <span className="truncate">
                             {(() => {
                               const current = parents.find(p => p.id === selectedParentId) || parents[0];
-                              return current ? `${current.name} (${current.email} • ${current.timezone})` : 'Select Parent Persona';
+                              if (!current) return 'Select Parent Persona';
+                              const count = current.bookedClassesCount ?? 0;
+                              const countText = `${count} ${count === 1 ? 'class' : 'classes'} booked`;
+                              return `${current.name} (${current.email} • ${current.timezone} • ${countText})`;
                             })()}
                           </span>
                           <ChevronDown size={16} className={`text-indigo-600 shrink-0 transition-transform duration-200 ${isParentDropdownOpen ? 'rotate-180' : ''}`} />
@@ -769,6 +775,8 @@ export default function App() {
                           <div className="absolute right-0 mt-2 w-full bg-white border border-gray-200 rounded-2xl shadow-xl z-40 max-h-52 overflow-y-auto p-1.5 space-y-0.5 border-t-2 border-t-indigo-600">
                             {parents.map((p) => {
                               const isSelected = p.id === selectedParentId;
+                              const count = p.bookedClassesCount ?? 0;
+                              const countText = `${count} ${count === 1 ? 'class' : 'classes'} booked`;
                               return (
                                 <div
                                   key={p.id}
@@ -781,7 +789,9 @@ export default function App() {
                                 >
                                   <div className="truncate pr-2">
                                     <span className="font-bold text-gray-900">{p.name}</span>{' '}
-                                    <span className="text-gray-500 text-xs font-normal">({p.email} • {p.timezone})</span>
+                                    <span className="text-gray-500 text-xs font-normal">
+                                      ({p.email} • {p.timezone} • <span className="font-semibold text-indigo-600">{countText}</span>)
+                                    </span>
                                   </div>
                                   {isSelected && <Check size={15} className="text-indigo-600 shrink-0" />}
                                 </div>

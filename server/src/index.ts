@@ -72,11 +72,26 @@ app.get('/api/parents', async (req: Request, res: Response) => {
       return res.json(cache.parents.data);
     }
 
-    const parents = await prisma.parent.findMany();
+    const parents = await prisma.parent.findMany({
+      include: {
+        _count: {
+          select: { bookings: { where: { status: 'CONFIRMED' } } }
+        }
+      },
+      orderBy: { name: 'asc' }
+    });
 
-    cache.parents.data = parents;
+    const formattedParents = parents.map(p => ({
+      id: p.id,
+      name: p.name,
+      email: p.email,
+      timezone: p.timezone,
+      bookedClassesCount: p._count.bookings
+    }));
+
+    cache.parents.data = formattedParents;
     cache.parents.timestamp = now;
-    res.json(parents);
+    res.json(formattedParents);
   } catch (error) {
     console.error('Error fetching parents:', error);
     res.status(500).json({ error: 'Failed to fetch parents' });
