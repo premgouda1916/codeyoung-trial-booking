@@ -39,9 +39,16 @@ interface BookingSuccessData {
 
 const TIMEZONES = [
   { value: 'America/New_York', label: 'Eastern Time (US & Canada) - EST/EDT' },
-  { value: 'Europe/London', label: 'London, UK - GMT/BST' },
+  { value: 'America/Chicago', label: 'Central Time (US & Canada) - CST/CDT' },
+  { value: 'America/Denver', label: 'Mountain Time (US & Canada) - MST/MDT' },
   { value: 'America/Los_Angeles', label: 'Pacific Time (US & Canada) - PST/PDT' },
-  { value: 'America/Chicago', label: 'Central Time (US & Canada) - CST/CDT' }
+  { value: 'Europe/London', label: 'London, UK - GMT/BST' },
+  { value: 'Europe/Paris', label: 'Central European Time (Paris/Berlin) - CET/CEST' },
+  { value: 'Asia/Kolkata', label: 'India Standard Time (India) - IST' },
+  { value: 'Asia/Dubai', label: 'Gulf Standard Time (Dubai/UAE) - GST' },
+  { value: 'Asia/Singapore', label: 'Singapore & Hong Kong - SGT/HKT' },
+  { value: 'Asia/Tokyo', label: 'Japan Standard Time (Tokyo) - JST' },
+  { value: 'Australia/Sydney', label: 'Australian Eastern Time (Sydney) - AEST/AEDT' }
 ];
 
 export default function App() {

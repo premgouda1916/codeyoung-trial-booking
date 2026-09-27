@@ -414,3 +414,13 @@ Ensure all Mermaid diagram node labels containing special characters or punctuat
 1. **Static Asset Placement**: Saved official brand logo to `client/public/logo.png`.
 2. **Header UI Integration**: Updated navigation header `<img>` element in `client/src/App.tsx` with subtle shadow and border framing.
 
+---
+
+### 2026-09-27 18:59:00 UTC
+**User:** Expand the application header timezone selector options beyond US/UK defaults to support global parent markets across North America, Europe, Asia, Middle East, and Australia while maintaining dynamic Luxon IANA timezone and DST math.
+
+**AI:** Expanded global timezone selector options:
+1. **Global IANA Timezones**: Added support for North America (EST/EDT, CST/CDT, MST/MDT, PST/PDT), Europe (London GMT/BST, Paris/Berlin CET/CEST), Middle East (Dubai GST), Asia (India IST, Singapore/HK SGT/HKT, Tokyo JST), and Australia (Sydney AEST/AEDT).
+2. **Dynamic Conversion & DST Math**: Preserved native Luxon IANA conversion for all slots across every newly added timezone region.
+
+
