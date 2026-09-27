@@ -423,4 +423,24 @@ Ensure all Mermaid diagram node labels containing special characters or punctuat
 1. **Global IANA Timezones**: Added support for North America (EST/EDT, CST/CDT, MST/MDT, PST/PDT), Europe (London GMT/BST, Paris/Berlin CET/CEST), Middle East (Dubai GST), Asia (India IST, Singapore/HK SGT/HKT, Tokyo JST), and Australia (Sydney AEST/AEDT).
 2. **Dynamic Conversion & DST Math**: Preserved native Luxon IANA conversion for all slots across every newly added timezone region.
 
+---
+
+### 2026-09-27 19:04:00 UTC
+**User:** Verify and enhance the application error states for scenarios where no mentors or time slots are available. Implement an explicit fully booked alert banner with a custom time slot request / waitlist trigger.
+
+**AI:** Implemented 5-tier error handling architecture:
+1. **Fully Booked Alert Banner**: Rendered an amber notification card when `slots.length === 0` offering an instant waitlist modal trigger.
+2. **Mentor & Capacity Guardrails**: Rendered disabled "Fully Booked" badges on mentor cards with 0 slots.
+3. **Double-Booking & Conflict Fallbacks**: Built optimistic UI rollback with `suggestedSlot` alternative mentor recommendation banners on 409 Conflict.
+4. **Network Drop Resilience**: Implemented server connection error cards with instant retry controls.
+
+---
+
+### 2026-09-27 19:06:00 UTC
+**User:** Update `README.md` to explicitly document all error handling, capacity guardrails, and graceful fallback state mechanisms.
+
+**AI:** Documented Error Handling Architecture:
+1. **README Section Added**: Inserted `## 🛡️ Error Handling & Graceful Fallback States` detailing all 4 error handling tiers in `README.md`.
+
+
 
