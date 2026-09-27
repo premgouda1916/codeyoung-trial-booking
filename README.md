@@ -197,6 +197,25 @@ Upon booking creation, the backend dispatches an instant confirmation and logs t
 
 ---
 
+## 🛡️ Error Handling & Graceful Fallback States
+
+The application is engineered to handle edge cases gracefully with clear, parent-friendly error states:
+
+1. **No Mentors Available / Fully Booked State**:
+   - When all mentors reach maximum daily capacity or 0 slots remain, the UI displays a prominent **"All Mentors are Currently Fully Booked"** banner.
+   - Provides an instant **"Request Custom Time Slot / Join Waitlist"** modal trigger so parents are never stranded.
+
+2. **Mentor-Level Capacity Exhaustion**:
+   - Mentors with 0 available slots on a given day display a disabled **"Fully Booked"** badge and `No Slots Available` state.
+
+3. **Concurrency & Double-Booking Fallbacks (409 Conflict)**:
+   - If a slot is booked simultaneously by another parent, the system rolls back optimistic UI state instantly and returns a `suggestedSlot` alternative mentor/time recommendation banner (**"Accept Suggested Slot"**).
+
+4. **Network & Connection Resilience**:
+   - If backend connectivity drops, a clean error card displays *"Could not connect to backend server"* with a **"Retry Connecting"** action.
+
+---
+
 ## 🏗️ Technical Stack & Architecture
 
 ### Frontend (`/client`)
