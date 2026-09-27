@@ -437,9 +437,11 @@ export default function App() {
         <header className="bg-white border-b border-gray-200 sticky top-0 z-30 shadow-xs">
           <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-4 flex flex-col md:flex-row md:items-center md:justify-between gap-4">
             <div className="flex items-center gap-3">
-              <div className="w-11 h-11 bg-indigo-600 rounded-2xl flex items-center justify-center text-white font-extrabold text-xl shadow-md tracking-tight">
-                CY
-              </div>
+              <img 
+                src="/logo.png" 
+                alt="Codeyoung Logo" 
+                className="w-11 h-11 rounded-2xl object-contain shadow-md bg-white p-1 border border-gray-200 shrink-0" 
+              />
               <div>
                 <h1 className="text-xl sm:text-2xl font-bold text-gray-900 tracking-tight">Codeyoung Trial Class Booking</h1>
                 <p className="text-xs sm:text-sm text-gray-500 font-medium">1-on-1 Live Coding Demo with India's Top Mentors</p>
