@@ -181,13 +181,18 @@ app.post('/api/bookings', async (req: Request, res: Response) => {
   }
 
   try {
-    // Execute interactive Prisma transaction for atomic concurrency & capacity safety
+    // Execute interactive Prisma transaction with parallelized queries for sub-100ms performance
     const bookingResult = await prisma.$transaction(async (tx) => {
-      // 1. Find Slot and associated Mentor
-      const slot = await tx.slot.findUnique({
-        where: { id: slotId },
-        include: { mentor: true }
-      });
+      // 1. Fetch Slot and Parent in parallel to cut 1 full network round-trip
+      const [slot, parentRecord] = await Promise.all([
+        tx.slot.findUnique({
+          where: { id: slotId },
+          include: { mentor: true }
+        }),
+        tx.parent.findUnique({
+          where: { id: parentId }
+        })
+      ]);
 
       if (!slot) {
         throw new Error('SLOT_NOT_FOUND');
@@ -197,10 +202,6 @@ app.post('/api/bookings', async (req: Request, res: Response) => {
         throw new Error('SLOT_ALREADY_BOOKED');
       }
 
-      // Check if parent exists
-      const parentRecord = await tx.parent.findUnique({
-        where: { id: parentId }
-      });
       if (!parentRecord) {
         throw new Error('PARENT_NOT_FOUND');
       }
@@ -230,35 +231,35 @@ app.post('/api/bookings', async (req: Request, res: Response) => {
         throw new Error('MENTOR_MAX_CAPACITY_EXCEEDED');
       }
 
-      // 3. Mark Slot as booked
-      await tx.slot.update({
-        where: { id: slotId },
-        data: { isBooked: true }
-      });
-
-      // 4. Create Booking record and mock meeting URL
+      // 3. Mark Slot as booked & Create Booking record in parallel to cut another network round-trip
       const meetingUrl = `https://meet.codeyoung-mock.com/demo-${Math.random().toString(36).substring(2, 9)}`;
 
-      const newBooking = await tx.booking.create({
-        data: {
-          slotId: slot.id,
-          parentId,
-          mentorId: mentor.id,
-          startTime: slot.startTime,
-          endTime: slot.endTime,
-          status: 'CONFIRMED'
-        },
-        include: {
-          mentor: true,
-          parent: true,
-          slot: true
-        }
-      });
+      const [, newBooking] = await Promise.all([
+        tx.slot.update({
+          where: { id: slotId },
+          data: { isBooked: true }
+        }),
+        tx.booking.create({
+          data: {
+            slotId: slot.id,
+            parentId,
+            mentorId: mentor.id,
+            startTime: slot.startTime,
+            endTime: slot.endTime,
+            status: 'CONFIRMED'
+          },
+          include: {
+            mentor: true,
+            parent: true,
+            slot: true
+          }
+        })
+      ]);
 
-      // 5. Clear API cache upon state mutation
+      // 4. Clear API cache upon state mutation
       clearCache();
 
-      // 6. Log mock email notifications & 2 scheduled pre-class email reminders
+      // 5. Log mock email notifications & 2 scheduled pre-class email reminders
       console.log(`\n=================== [NOTIFICATION SERVICE] ===================`);
       console.log(`[EMAIL DISPATCH] Instant Confirmation to Parent (${newBooking.parent.email}):`);
       console.log(`  Subject: Your Codeyoung Trial Class is Confirmed!`);
