@@ -1,0 +1,66 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model Mentor {
+  id            String    @id @default(uuid())
+  name          String
+  email         String    @unique
+  timezone      String    @default("Asia/Kolkata") // IANA timezone string for mentor local calendar day calculations
+  maxDailyDemos Int       @default(2) // Core constraint: Max 2 demo classes per local calendar day
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
+
+  slots         Slot[]
+  bookings      Booking[]
+}
+
+model Parent {
+  id        String    @id @default(uuid())
+  name      String
+  email     String    @unique
+  timezone  String    @default("America/New_York") // IANA timezone string for parent display (US/UK)
+  createdAt DateTime  @default(now())
+  updatedAt DateTime  @updatedAt
+
+  bookings  Booking[]
+}
+
+model Slot {
+  id        String   @id @default(uuid())
+  mentorId  String
+  mentor    Mentor   @relation(fields: [mentorId], references: [id], onDelete: Cascade)
+  startTime DateTime // Stored strictly in UTC
+  endTime   DateTime // Stored strictly in UTC
+  isBooked  Boolean  @default(false)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  booking   Booking?
+
+  @@unique([mentorId, startTime])
+  @@index([mentorId, startTime, isBooked])
+}
+
+model Booking {
+  id        String   @id @default(uuid())
+  slotId    String   @unique
+  slot      Slot     @relation(fields: [slotId], references: [id], onDelete: Cascade)
+  parentId  String
+  parent    Parent   @relation(fields: [parentId], references: [id], onDelete: Cascade)
+  mentorId  String
+  mentor    Mentor   @relation(fields: [mentorId], references: [id], onDelete: Cascade)
+  startTime DateTime // Stored strictly in UTC
+  endTime   DateTime // Stored strictly in UTC
+  status    String   @default("CONFIRMED") // e.g., CONFIRMED, CANCELLED
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([mentorId, startTime])
+  @@index([parentId, startTime])
+}

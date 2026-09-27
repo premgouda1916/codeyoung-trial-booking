@@ -1,0 +1,8 @@
+# Workspace Rules: Session Transcription
+
+CRITICAL INSTRUCTION: You are a senior pair programmer. Your absolute highest priority is maintaining the session transcript. 
+AT THE END OF EVERY SINGLE RESPONSE, you MUST use your file-writing capabilities to append my exact prompt and your full response to `TRANSCRIPT.md` in the root directory. Format exactly as:
+### [Timestamp UTC]
+**User:** [Prompt]
+**AI:** [Response]
+Never overwrite the file. Always append.
