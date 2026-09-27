@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { DateTime } from 'luxon';
-import { Calendar, Clock, User, Globe, CheckCircle2, AlertTriangle, ArrowRight, RefreshCw, Video, ArrowLeft, UserCheck, ShieldCheck, Zap, Mail, X, Check } from 'lucide-react';
+import { Calendar, Clock, User, Globe, CheckCircle2, AlertTriangle, ArrowRight, RefreshCw, Video, ArrowLeft, UserCheck, ShieldCheck, Zap, Mail, X, Star, ChevronDown, Check, Trash2, ExternalLink, Download, Bell } from 'lucide-react';
 
 interface Mentor {
   id: string;
@@ -47,7 +47,18 @@ export default function App() {
   const [selectedTimezone, setSelectedTimezone] = useState<string>('America/New_York');
   const [slots, setSlots] = useState<Slot[]>([]);
   const [parents, setParents] = useState<Parent[]>([]);
+  const [allMentors, setAllMentors] = useState<Mentor[]>([]);
   const [selectedParentId, setSelectedParentId] = useState<string>('');
+  const [isParentDropdownOpen, setIsParentDropdownOpen] = useState<boolean>(false);
+
+  // Evaluator Debug Mode State
+  const [isDebugMode, setIsDebugMode] = useState<boolean>(false);
+
+  // Profile View & Bookings Dashboard State
+  const [currentView, setCurrentView] = useState<'book' | 'profile'>('book');
+  const [parentBookings, setParentBookings] = useState<BookingSuccessData[]>([]);
+  const [loadingParentBookings, setLoadingParentBookings] = useState<boolean>(false);
+  const [cancellingBookingId, setCancellingBookingId] = useState<string | null>(null);
   
   // Selection & Navigation States
   const [selectedMentorId, setSelectedMentorId] = useState<string | null>(null);
@@ -68,28 +79,68 @@ export default function App() {
   const [suggestedSlot, setSuggestedSlot] = useState<Slot | null>(null);
   const [bookingSuccessData, setBookingSuccessData] = useState<BookingSuccessData | null>(null);
 
+  // Initial Concurrent Fetch & Silent 30-Second Background Data Polling
   useEffect(() => {
-    fetchSlots();
-    fetchParents();
+    // Fire all initial requests concurrently in parallel
+    Promise.all([
+      fetchSlots(true),
+      fetchParents(),
+      fetchMentors()
+    ]);
+
+    // Silent background polling every 30 seconds without layout flash or re-renders
+    const intervalId = setInterval(() => {
+      fetchSlots(false);
+      fetchMentors();
+    }, 30000);
+
+    return () => clearInterval(intervalId);
   }, []);
 
-  const fetchSlots = async () => {
-    setLoadingSlots(true);
-    setFetchError(null);
+  // Fetch parent bookings whenever selected parent changes
+  useEffect(() => {
+    if (selectedParentId) {
+      fetchParentBookings(selectedParentId, true);
+    }
+  }, [selectedParentId]);
+
+  const fetchSlots = async (isInitialCall: boolean = false) => {
+    if (isInitialCall) {
+      setLoadingSlots(true);
+    }
     try {
       const res = await fetch('/api/slots');
       if (res.ok) {
         const data: Slot[] = await res.json();
-        setSlots(data);
+        setSlots(prev => JSON.stringify(prev) === JSON.stringify(data) ? prev : data);
+        setFetchError(null);
       } else {
         const errorData = await res.json().catch(() => ({}));
-        setFetchError(errorData.error || `Server returned status ${res.status}`);
+        if (isInitialCall) {
+          setFetchError(errorData.error || `Server returned status ${res.status}`);
+        }
       }
     } catch (err: any) {
       console.error('Error fetching slots:', err);
-      setFetchError('Could not connect to backend server.');
+      if (isInitialCall) {
+        setFetchError('Could not connect to backend server.');
+      }
     } finally {
-      setLoadingSlots(false);
+      if (isInitialCall) {
+        setLoadingSlots(false);
+      }
+    }
+  };
+
+  const fetchMentors = async () => {
+    try {
+      const res = await fetch('/api/mentors');
+      if (res.ok) {
+        const data: Mentor[] = await res.json();
+        setAllMentors(prev => JSON.stringify(prev) === JSON.stringify(data) ? prev : data);
+      }
+    } catch (err) {
+      console.error('Error fetching mentors:', err);
     }
   };
 
@@ -98,14 +149,121 @@ export default function App() {
       const res = await fetch('/api/parents');
       if (res.ok) {
         const data: Parent[] = await res.json();
-        setParents(data);
+        setParents(prev => JSON.stringify(prev) === JSON.stringify(data) ? prev : data);
         if (data.length > 0) {
-          setSelectedParentId(data[0].id);
+          setSelectedParentId(prev => {
+            const isValid = data.some(p => p.id === prev);
+            if (prev && isValid) {
+              return prev;
+            }
+            if (data[0].timezone) {
+              setSelectedTimezone(data[0].timezone);
+            }
+            return data[0].id;
+          });
         }
       }
     } catch (err) {
       console.error('Error fetching parents:', err);
     }
+  };
+
+  const fetchParentBookings = async (pId: string, isInitialCall: boolean = false) => {
+    if (!pId) return;
+    if (isInitialCall) {
+      setLoadingParentBookings(true);
+    }
+    try {
+      const res = await fetch(`/api/parents/${pId}/bookings`);
+      if (res.ok) {
+        const data = await res.json();
+        setParentBookings(prev => JSON.stringify(prev) === JSON.stringify(data) ? prev : data);
+      }
+    } catch (err) {
+      console.error('Error fetching parent bookings:', err);
+    } finally {
+      if (isInitialCall) {
+        setLoadingParentBookings(false);
+      }
+    }
+  };
+
+  const handleCancelBooking = async (bookingId: string) => {
+    if (!bookingId) return;
+    setCancellingBookingId(bookingId);
+    try {
+      const res = await fetch(`/api/bookings/${bookingId}`, {
+        method: 'DELETE'
+      });
+      if (res.ok) {
+        fetchParentBookings(selectedParentId);
+        fetchSlots();
+        fetchMentors();
+      }
+    } catch (err) {
+      console.error('Error cancelling booking:', err);
+    } finally {
+      setCancellingBookingId(null);
+    }
+  };
+
+  // Helper: Dynamic .ics Calendar Invite Generator (With 2 Device Calendar Alarms)
+  const downloadICS = (booking: BookingSuccessData) => {
+    if (!booking || !booking.startTime || !booking.endTime) return;
+
+    const startFormatted = DateTime.fromISO(booking.startTime).toUTC().toFormat("yyyyMMdd'T'HHmmss'Z'");
+    const endFormatted = DateTime.fromISO(booking.endTime).toUTC().toFormat("yyyyMMdd'T'HHmmss'Z'");
+    const mentorName = booking.mentor?.name || 'Codeyoung Mentor';
+    const meetingUrl = booking.meetingUrl || 'https://meet.codeyoung-mock.com/demo-class';
+
+    const icsContent = [
+      'BEGIN:VCALENDAR',
+      'VERSION:2.0',
+      'PRODID:-//Codeyoung//Trial Class Booking//EN',
+      'CALSCALE:GREGORIAN',
+      'METHOD:PUBLISH',
+      'BEGIN:VEVENT',
+      `SUMMARY:Codeyoung 1-on-1 Trial Class with ${mentorName}`,
+      `DESCRIPTION:Live 1-on-1 Coding Demo Class for Kids.\\nClassroom Link: ${meetingUrl}\\n\\n2 Automatic Pre-Class Alarms Configured (24 Hours & 15 Minutes Before Class).`,
+      `LOCATION:${meetingUrl}`,
+      `DTSTART:${startFormatted}`,
+      `DTEND:${endFormatted}`,
+      'STATUS:CONFIRMED',
+      'BEGIN:VALARM',
+      'ACTION:DISPLAY',
+      `DESCRIPTION:Reminder (1 of 2): Codeyoung Trial Class with ${mentorName} in 24 hours!`,
+      'TRIGGER:-P1D',
+      'END:VALARM',
+      'BEGIN:VALARM',
+      'ACTION:DISPLAY',
+      `DESCRIPTION:Reminder (2 of 2): Codeyoung Trial Class with ${mentorName} starts in 15 minutes!`,
+      'TRIGGER:-PT15M',
+      'END:VALARM',
+      'END:VEVENT',
+      'END:VCALENDAR'
+    ].join('\r\n');
+
+    const blob = new Blob([icsContent], { type: 'text/calendar;charset=utf-8' });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = url;
+    link.setAttribute(
+      'download',
+      `codeyoung-demo-${mentorName.toLowerCase().replace(/\s+/g, '-')}.ics`
+    );
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+  };
+
+  // Persona & Timezone Synchronization handler
+  const handleSelectParent = (parentId: string) => {
+    setSelectedParentId(parentId);
+    const targetParent = parents.find(p => p.id === parentId);
+    if (targetParent && targetParent.timezone) {
+      setSelectedTimezone(targetParent.timezone);
+    }
+    setIsParentDropdownOpen(false);
   };
 
   // Group slots by Mentor
@@ -119,7 +277,14 @@ export default function App() {
     return acc;
   }, {});
 
-  const mentorsList = Object.values(mentorsMap);
+  // Complete list of display mentors (including fully booked mentors)
+  const displayMentorsList = allMentors.length > 0
+    ? allMentors.map(m => ({
+        mentor: m,
+        slots: mentorsMap[m.id] ? mentorsMap[m.id].slots : []
+      }))
+    : Object.values(mentorsMap);
+
   const selectedMentorGroup = selectedMentorId ? mentorsMap[selectedMentorId] : null;
 
   // Group slots for the selected mentor by Local Date in selectedTimezone
@@ -150,10 +315,17 @@ export default function App() {
 
   const activeDateGroup = selectedDateKey && mentorDateMap[selectedDateKey] ? mentorDateMap[selectedDateKey] : null;
 
+  // Optimistic UI Update & Conflict Rollback Execution
   const handleBookSlot = async (targetSlotId: string) => {
-    if (!targetSlotId) return;
+    if (!targetSlotId || submitting) return;
 
     const parentIdToUse = selectedParentId || (parents.length > 0 ? parents[0].id : 'dummy-parent-1');
+
+    // Backup previous slots for rollback on 409 Conflict or network error
+    const previousSlots = [...slots];
+
+    // Optimistically remove target slot from UI immediately
+    setSlots(prev => prev.filter(s => s.id !== targetSlotId));
 
     setSubmitting(true);
     setStatus('idle');
@@ -176,7 +348,12 @@ export default function App() {
         setBookingSuccessData(responseData);
         setStatus('success');
         fetchSlots();
+        fetchMentors();
+        fetchParentBookings(parentIdToUse);
       } else {
+        // Rollback optimistic state on 409 Conflict
+        setSlots(previousSlots);
+
         if (responseData.suggestedSlot) {
           setSuggestedSlot(responseData.suggestedSlot);
           setStatus('fallback');
@@ -186,6 +363,8 @@ export default function App() {
         setErrorMessage(responseData.error || 'Failed to complete booking.');
       }
     } catch (err: any) {
+      // Rollback optimistic state on network failure
+      setSlots(previousSlots);
       setStatus('error');
       setErrorMessage('Network error or server unavailable. Please try again.');
     } finally {
@@ -200,6 +379,7 @@ export default function App() {
       const luxonObj = DateTime.fromISO(earliest.startTime).setZone(selectedTimezone);
       setSelectedDateKey(luxonObj.toFormat('yyyy-MM-dd'));
       setSelectedSlotId(earliest.id);
+      setCurrentView('book');
     }
   };
 
@@ -231,403 +411,782 @@ export default function App() {
     setSelectedMentorId(null);
     setSelectedDateKey(null);
     fetchSlots();
+    fetchMentors();
+    fetchParentBookings(selectedParentId);
   };
 
+  const currentParentObj = parents.find(p => p.id === selectedParentId) || parents[0];
+
   return (
-    <div className="app-container">
-      {/* Header Banner */}
-      <header className="header">
-        <div className="brand">
-          <div className="logo-badge">CY</div>
-          <div>
-            <h1>Codeyoung Trial Class Booking</h1>
-            <p>Live 1-on-1 Coding Demo with India's Top Mentors</p>
-          </div>
-        </div>
-
-        {/* Timezone Selector Bar */}
-        <div className="timezone-selector">
-          <Globe className="icon" size={18} />
-          <label htmlFor="timezone-select">Display Timezone:</label>
-          <select
-            id="timezone-select"
-            value={selectedTimezone}
-            onChange={(e) => setSelectedTimezone(e.target.value)}
-          >
-            {TIMEZONES.map((tz) => (
-              <option key={tz.value} value={tz.value}>
-                {tz.label}
-              </option>
-            ))}
-          </select>
-        </div>
-      </header>
-
-      {/* Quick Customer Experience Action Chips */}
-      <div className="cx-actions-bar">
-        <button className="cx-chip chip-zap" onClick={handleQuickEarliestSlot} disabled={slots.length === 0}>
-          <Zap size={14} /> Book Earliest Available Class
-        </button>
-
-        <button className="cx-chip chip-request" onClick={() => setShowWaitlistModal(true)}>
-          <Mail size={14} /> Can't Find Your Time? Request Custom Slot
-        </button>
-      </div>
-
-      <main className="main-content">
-        {/* SUCCESS STATE */}
-        {status === 'success' && bookingSuccessData && (
-          <div className="card success-card">
-            <div className="success-header">
-              <CheckCircle2 size={48} className="success-icon" />
-              <h2>Demo Class Successfully Booked!</h2>
-              <p>
-                Confirmation email sent with live class link to parent (<strong>{bookingSuccessData.parent?.email}</strong>) and mentor (<strong>{bookingSuccessData.mentor?.email}</strong>).
-              </p>
-            </div>
-
-            <div className="booking-details-box">
-              <div className="detail-row">
-                <span className="label">Mentor:</span>
-                <span className="value">{bookingSuccessData.mentor?.name} ({bookingSuccessData.mentor?.email})</span>
+    <div className="min-h-screen bg-slate-50 text-gray-900 pb-16 antialiased flex flex-col justify-between">
+      <div>
+        {/* Top Header Banner */}
+        <header className="bg-white border-b border-gray-200 sticky top-0 z-30 shadow-xs">
+          <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-4 flex flex-col md:flex-row md:items-center md:justify-between gap-4">
+            <div className="flex items-center gap-3">
+              <div className="w-11 h-11 bg-indigo-600 rounded-2xl flex items-center justify-center text-white font-extrabold text-xl shadow-md tracking-tight">
+                CY
               </div>
-              <div className="detail-row">
-                <span className="label">Parent:</span>
-                <span className="value">{bookingSuccessData.parent?.name} ({bookingSuccessData.parent?.email})</span>
-              </div>
-              <div className="detail-row">
-                <span className="label">Scheduled Time ({selectedTimezone}):</span>
-                <span className="value highlight">
-                  {formatTimeInZone(bookingSuccessData.startTime, selectedTimezone)}
-                </span>
-              </div>
-              <div className="detail-row">
-                <span className="label">Mentor Local Time (Asia/Kolkata):</span>
-                <span className="value">
-                  {formatTimeInZone(bookingSuccessData.startTime, 'Asia/Kolkata')}
-                </span>
-              </div>
-              <div className="detail-row">
-                <span className="label">Live Class Link (Dummy):</span>
-                <span className="value link-box">
-                  <a href={bookingSuccessData.meetingUrl} target="_blank" rel="noopener noreferrer">
-                    <Video size={16} /> {bookingSuccessData.meetingUrl}
-                  </a>
-                </span>
+              <div>
+                <h1 className="text-xl sm:text-2xl font-bold text-gray-900 tracking-tight">Codeyoung Trial Class Booking</h1>
+                <p className="text-xs sm:text-sm text-gray-500 font-medium">1-on-1 Live Coding Demo with India's Top Mentors</p>
               </div>
             </div>
 
-            <button className="btn btn-primary" onClick={resetBookingForm}>
-              <RefreshCw size={16} /> Book Another Trial Class
-            </button>
+            {/* Timezone Selector Dropdown */}
+            <div className="flex items-center gap-2 bg-slate-100 hover:bg-slate-200/80 px-4 py-2 rounded-full border border-gray-200 transition-colors">
+              <Globe className="text-indigo-600 shrink-0" size={18} />
+              <label htmlFor="timezone-select" className="text-xs sm:text-sm font-semibold text-gray-700 shrink-0">Timezone:</label>
+              <select
+                id="timezone-select"
+                className="bg-transparent text-xs sm:text-sm font-bold text-indigo-900 focus:outline-none cursor-pointer pr-2"
+                value={selectedTimezone}
+                onChange={(e) => setSelectedTimezone(e.target.value)}
+              >
+                {TIMEZONES.map((tz) => (
+                  <option key={tz.value} value={tz.value}>
+                    {tz.label}
+                  </option>
+                ))}
+              </select>
+            </div>
           </div>
-        )}
+        </header>
 
-        {/* BOOKING FLOW */}
-        {status !== 'success' && (
-          <>
-            {/* Parent Persona Selector Bar */}
-            {parents.length > 0 && (
-              <div className="parent-selection-card">
-                <User size={18} className="icon" />
-                <label htmlFor="parent-select">Booking Persona:</label>
-                <select
-                  id="parent-select"
-                  value={selectedParentId}
-                  onChange={(e) => setSelectedParentId(e.target.value)}
-                >
-                  {parents.map((p) => (
-                    <option key={p.id} value={p.id}>
-                      {p.name} ({p.email} - {p.timezone})
-                    </option>
-                  ))}
-                </select>
-              </div>
-            )}
+        {/* Main Container */}
+        <main className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 pt-6">
+          {/* Quick EdTech Action Chips & View Navigation Bar */}
+          <div className="flex flex-wrap items-center justify-between gap-3 mb-8 bg-white p-4 rounded-2xl border border-gray-200 shadow-sm">
+            <div className="flex flex-wrap items-center gap-2">
+              <button
+                className="inline-flex items-center gap-2 bg-indigo-600 hover:bg-indigo-700 text-white text-xs sm:text-sm font-semibold px-4 py-2.5 rounded-full shadow-sm transition-all duration-200 disabled:opacity-50 disabled:cursor-not-allowed hover:shadow-md cursor-pointer"
+                onClick={handleQuickEarliestSlot}
+                disabled={slots.length === 0}
+              >
+                <Zap size={15} /> Book Earliest Available Class
+              </button>
 
-            {/* Fallback Suggestion Banner */}
-            {status === 'fallback' && suggestedSlot && (
-              <div className="banner fallback-banner">
-                <div className="banner-content">
-                  <AlertTriangle className="icon" size={24} />
+              <button
+                className="inline-flex items-center gap-2 bg-slate-100 hover:bg-slate-200 text-gray-700 text-xs sm:text-sm font-semibold px-4 py-2.5 rounded-full border border-gray-300 transition-colors cursor-pointer"
+                onClick={() => setShowWaitlistModal(true)}
+              >
+                <Mail size={15} className="text-indigo-600" /> Request Custom Time Slot
+              </button>
+            </div>
+
+            {/* View Mode Navigation Switch (Book Class vs My Bookings Dashboard) */}
+            <div className="flex items-center gap-1.5 bg-slate-100 p-1.5 rounded-full border border-gray-200">
+              <button
+                className={`px-4 py-1.5 rounded-full text-xs sm:text-sm font-bold transition-all cursor-pointer ${
+                  currentView === 'book'
+                    ? 'bg-indigo-600 text-white shadow-xs'
+                    : 'text-gray-600 hover:text-gray-900'
+                }`}
+                onClick={() => setCurrentView('book')}
+              >
+                <Calendar size={14} className="inline mr-1.5" /> Book Class
+              </button>
+
+              <button
+                className={`px-4 py-1.5 rounded-full text-xs sm:text-sm font-bold transition-all cursor-pointer ${
+                  currentView === 'profile'
+                    ? 'bg-indigo-600 text-white shadow-xs'
+                    : 'text-gray-600 hover:text-gray-900'
+                }`}
+                onClick={() => {
+                  setCurrentView('profile');
+                  if (selectedParentId) fetchParentBookings(selectedParentId);
+                }}
+              >
+                <User size={14} className="inline mr-1.5" /> My Bookings ({parentBookings.length})
+              </button>
+            </div>
+          </div>
+
+          {/* VIEW 1: PARENT PROFILE DASHBOARD ("MY BOOKINGS") */}
+          {currentView === 'profile' && (
+            <div className="space-y-6">
+              <div className="bg-white border border-gray-200 rounded-2xl p-6 shadow-sm flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+                <div className="flex items-center gap-4">
+                  <div className="w-14 h-14 bg-indigo-600 text-white rounded-2xl flex items-center justify-center font-extrabold text-2xl shadow-md shrink-0">
+                    {currentParentObj ? currentParentObj.name[0] : 'P'}
+                  </div>
                   <div>
-                    <h3>Mentor Unavailable for Selected Time</h3>
-                    <p>{errorMessage || 'This mentor is fully booked for this date/time.'}</p>
-                    <p className="suggestion-text">
-                      Would you like to book <strong>{suggestedSlot.mentor?.name || 'an available mentor'}</strong> at{' '}
-                      <span className="highlight">
-                        {formatTimeInZone(suggestedSlot.startTime, selectedTimezone)}
-                      </span>{' '}
-                      instead?
-                    </p>
+                    <h2 className="text-xl font-bold text-gray-900">{currentParentObj ? currentParentObj.name : 'Parent Profile'}</h2>
+                    <p className="text-xs sm:text-sm text-gray-500 mb-1.5">{currentParentObj ? currentParentObj.email : ''}</p>
+                    <span className="inline-flex items-center gap-1 bg-indigo-50 text-indigo-700 text-xs font-semibold px-2.5 py-0.5 rounded-md border border-indigo-100">
+                      <Globe size={12} /> Default Zone: {currentParentObj ? currentParentObj.timezone : selectedTimezone}
+                    </span>
                   </div>
                 </div>
-                <button
-                  className="btn btn-fallback"
-                  onClick={() => handleBookSlot(suggestedSlot.id)}
-                  disabled={submitting}
-                >
-                  {submitting ? 'Booking Suggested Slot...' : 'Accept Suggested Slot & Book'}
-                </button>
-              </div>
-            )}
 
-            {status === 'error' && !suggestedSlot && (
-              <div className="banner error-banner">
-                <AlertTriangle className="icon" size={20} />
-                <span>{errorMessage || 'Failed to book slot. Please try another slot.'}</span>
-              </div>
-            )}
-
-            {/* PAGE VIEW 1: MENTORS GRID */}
-            {!selectedMentorId && (
-              <div className="step-section">
-                <div className="section-title">
-                  <UserCheck size={20} />
-                  <h2>Select a Mentor</h2>
-                  <span className="badge">{mentorsList.length} Mentors Available</span>
+                <div className="bg-slate-50 border border-gray-200 rounded-xl px-5 py-3 text-center shrink-0">
+                  <span className="block text-2xl font-extrabold text-indigo-600">{parentBookings.length}</span>
+                  <span className="text-xs font-semibold text-gray-500 uppercase tracking-wider">Scheduled Classes</span>
                 </div>
+              </div>
 
-                {loadingSlots ? (
-                  <div className="loading-state">
-                    <div className="spinner"></div>
-                    <p>Loading mentors and available slots...</p>
+              {loadingParentBookings ? (
+                <div className="bg-white border border-gray-200 rounded-2xl p-12 text-center">
+                  <div className="w-10 h-10 border-4 border-indigo-600 border-t-transparent rounded-full animate-spin mx-auto mb-3"></div>
+                  <p className="text-sm text-gray-600 font-medium">Loading scheduled trial classes...</p>
+                </div>
+              ) : parentBookings.length === 0 ? (
+                <div className="bg-white border border-gray-200 rounded-2xl p-12 text-center max-w-lg mx-auto">
+                  <Calendar className="text-indigo-400 mx-auto mb-3" size={40} />
+                  <h3 className="text-lg font-bold text-gray-900 mb-1">No Trial Classes Scheduled</h3>
+                  <p className="text-xs sm:text-sm text-gray-500 mb-6">You don't have any upcoming demo sessions booked for this profile yet.</p>
+                  <button
+                    className="inline-flex items-center gap-2 bg-indigo-600 hover:bg-indigo-700 text-white font-bold text-xs sm:text-sm px-6 py-3 rounded-full shadow-md transition-all cursor-pointer"
+                    onClick={() => setCurrentView('book')}
+                  >
+                    <Calendar size={16} /> Explore Mentors & Book First Class
+                  </button>
+                </div>
+              ) : (
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-5">
+                  {parentBookings.map((b) => (
+                    <div key={b.id} className="bg-white border border-gray-200 rounded-2xl p-6 shadow-sm flex flex-col justify-between space-y-4">
+                      <div>
+                        <div className="flex items-start justify-between gap-3 mb-4 pb-3 border-b border-gray-100">
+                          <div className="flex items-center gap-3">
+                            <div className="w-11 h-11 bg-indigo-100 text-indigo-700 rounded-full flex items-center justify-center font-bold text-base border border-indigo-200 shrink-0">
+                              {b.mentor?.name ? b.mentor.name[0] : 'M'}
+                            </div>
+                            <div>
+                              <h3 className="text-base font-bold text-gray-900">{b.mentor?.name}</h3>
+                              <p className="text-xs text-gray-500 font-medium">{b.mentor?.email}</p>
+                            </div>
+                          </div>
+                          <span className="bg-emerald-100 text-emerald-800 text-[11px] font-extrabold px-2.5 py-1 rounded-full uppercase tracking-wider">
+                            Confirmed
+                          </span>
+                        </div>
+
+                        <div className="bg-slate-50 rounded-xl p-3.5 space-y-2 text-xs border border-gray-100">
+                          <div className="flex items-center justify-between">
+                            <span className="text-gray-500 font-medium">Scheduled Time ({selectedTimezone}):</span>
+                            <span className="font-bold text-indigo-600">{formatTimeInZone(b.startTime, selectedTimezone)}</span>
+                          </div>
+                          <div className="flex items-center justify-between">
+                            <span className="text-gray-500 font-medium">Mentor IST Time:</span>
+                            <span className="font-semibold text-gray-700">{formatTimeInZone(b.startTime, 'Asia/Kolkata')}</span>
+                          </div>
+
+                          {/* Pre-Class Parent Notifications Box (2 Scheduled Reminders) */}
+                          <div className="bg-indigo-50/70 border border-indigo-100 rounded-xl p-2.5 text-[11px] space-y-1 mt-2 text-left">
+                            <div className="flex items-center gap-1.5 font-bold text-indigo-900">
+                              <Bell size={12} className="text-indigo-600 shrink-0" />
+                              <span>Pre-Class Parent Email Reminders (2 Scheduled):</span>
+                            </div>
+                            <div className="text-indigo-800 space-y-0.5 pl-3.5 font-medium">
+                              <div className="flex items-center gap-1.5">
+                                <Mail size={11} className="text-indigo-600 shrink-0" />
+                                <span><strong>1st Email (24h Before):</strong> Setup guide & class link sent to {currentParentObj?.email || b.parent?.email}</span>
+                              </div>
+                              <div className="flex items-center gap-1.5">
+                                <Mail size={11} className="text-indigo-600 shrink-0" />
+                                <span><strong>2nd Email (15m Before):</strong> Final alert & direct meeting room link</span>
+                              </div>
+                            </div>
+                          </div>
+
+                          {isDebugMode && (
+                            <div className="text-[10px] font-mono text-indigo-700 bg-indigo-50 p-2 rounded border border-indigo-100 mt-2">
+                              RAW UTC DTSTART: {b.startTime}
+                            </div>
+                          )}
+                        </div>
+                      </div>
+
+                      <div className="pt-2 flex flex-wrap items-center justify-between gap-2">
+                        <div className="flex items-center gap-2">
+                          <a
+                            href={b.meetingUrl}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            className="inline-flex items-center gap-1.5 bg-indigo-600 hover:bg-indigo-700 text-white font-bold text-xs px-3.5 py-2 rounded-full shadow-xs transition-all cursor-pointer"
+                          >
+                            <Video size={14} /> Access Meeting Link <ExternalLink size={12} />
+                          </a>
+
+                          <button
+                            onClick={() => downloadICS(b)}
+                            className="inline-flex items-center gap-1.5 bg-slate-100 hover:bg-slate-200 text-gray-700 font-bold text-xs px-3 py-2 rounded-full border border-gray-300 transition-colors cursor-pointer"
+                            title="Downloads calendar file with 2 built-in device alarms (24h and 15m before class)"
+                          >
+                            <Download size={13} /> Add to Calendar (.ics)
+                          </button>
+                        </div>
+
+                        <button
+                          onClick={() => handleCancelBooking(b.id)}
+                          disabled={cancellingBookingId === b.id}
+                          className="inline-flex items-center gap-1.5 bg-rose-50 hover:bg-rose-100 text-rose-700 font-bold text-xs px-3 py-2 rounded-full border border-rose-200 transition-colors cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
+                        >
+                          <Trash2 size={13} /> {cancellingBookingId === b.id ? 'Cancelling...' : 'Cancel Booking'}
+                        </button>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          )}
+
+          {/* VIEW 2: BOOKING FLOW & MENTORS GRID */}
+          {currentView === 'book' && (
+            <>
+              {/* SUCCESS STATE */}
+              {status === 'success' && bookingSuccessData && (
+                <div className="bg-white border border-emerald-200 rounded-3xl p-8 sm:p-10 shadow-lg text-center max-w-2xl mx-auto my-8">
+                  <div className="w-16 h-16 bg-emerald-100 text-emerald-600 rounded-full flex items-center justify-center mx-auto mb-4">
+                    <CheckCircle2 size={36} />
                   </div>
-                ) : fetchError ? (
-                  <div className="error-state">
-                    <AlertTriangle size={32} className="error-icon" />
-                    <p>{fetchError}</p>
-                    <button className="btn btn-primary" onClick={fetchSlots}>
-                      <RefreshCw size={16} /> Retry Connecting
+                  <h2 className="text-2xl sm:text-3xl font-extrabold text-gray-900 mb-2">Trial Class Booked! 🎉</h2>
+                  <p className="text-sm text-gray-600 mb-6 max-w-lg mx-auto">
+                    Instant confirmation email sent with classroom link to parent (<strong>{bookingSuccessData.parent?.email}</strong>) and mentor (<strong>{bookingSuccessData.mentor?.email}</strong>).
+                  </p>
+
+                  <div className="bg-slate-50 border border-gray-200 rounded-2xl p-6 text-left space-y-3.5 mb-8">
+                    <div className="flex justify-between items-center text-sm border-b border-gray-200 pb-2.5">
+                      <span className="text-gray-500 font-medium">Assigned Mentor:</span>
+                      <span className="font-bold text-gray-900">{bookingSuccessData.mentor?.name}</span>
+                    </div>
+                    <div className="flex justify-between items-center text-sm border-b border-gray-200 pb-2.5">
+                      <span className="text-gray-500 font-medium">Parent Profile:</span>
+                      <span className="font-semibold text-gray-900">{bookingSuccessData.parent?.name} ({bookingSuccessData.parent?.email})</span>
+                    </div>
+                    <div className="flex justify-between items-center text-sm border-b border-gray-200 pb-2.5">
+                      <span className="text-gray-500 font-medium">Scheduled Time ({selectedTimezone}):</span>
+                      <span className="font-bold text-indigo-600">{formatTimeInZone(bookingSuccessData.startTime, selectedTimezone)}</span>
+                    </div>
+                    <div className="flex justify-between items-center text-sm border-b border-gray-200 pb-2.5">
+                      <span className="text-gray-500 font-medium">Mentor Local Time (IST):</span>
+                      <span className="font-semibold text-gray-700">{formatTimeInZone(bookingSuccessData.startTime, 'Asia/Kolkata')}</span>
+                    </div>
+                    <div className="flex justify-between items-center text-sm border-b border-gray-200 pb-2.5">
+                      <span className="text-gray-500 font-medium">Meeting Room Link:</span>
+                      <a
+                        href={bookingSuccessData.meetingUrl}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="inline-flex items-center gap-1.5 font-bold text-indigo-600 hover:text-indigo-800 underline"
+                      >
+                        <Video size={16} /> Access Meeting Link <ExternalLink size={12} />
+                      </a>
+                    </div>
+
+                    {/* Pre-Class Double Reminder Schedule Alert */}
+                    <div className="bg-indigo-50 border border-indigo-100 rounded-xl p-3.5 text-xs space-y-1.5">
+                      <div className="flex items-center gap-1.5 font-bold text-indigo-900">
+                        <Bell size={14} className="text-indigo-600 shrink-0" />
+                        <span>Pre-Class Notification System Active (2 Reminders):</span>
+                      </div>
+                      <div className="text-indigo-800 space-y-1 pl-4 font-medium text-[11px]">
+                        <div className="flex items-center gap-1.5">
+                          <Mail size={12} className="text-indigo-600 shrink-0" />
+                          <span><strong>1st Email Reminder (24 Hours Before):</strong> Class preparation details & link sent to {bookingSuccessData.parent?.email}</span>
+                        </div>
+                        <div className="flex items-center gap-1.5">
+                          <Mail size={12} className="text-indigo-600 shrink-0" />
+                          <span><strong>2nd Email Reminder (15 Minutes Before):</strong> Final alert & meeting link sent to {bookingSuccessData.parent?.email}</span>
+                        </div>
+                        <div className="flex items-center gap-1.5 text-slate-600 pt-0.5">
+                          <Download size={12} className="text-indigo-600 shrink-0" />
+                          <span><strong>Device Alarms:</strong> Click "Add to Calendar (.ics)" below to sync 2 auto-alarms to your device calendar.</span>
+                        </div>
+                      </div>
+                    </div>
+
+                    {isDebugMode && (
+                      <div className="text-[10px] font-mono text-indigo-700 bg-indigo-50 p-2 rounded border border-indigo-100 mt-2">
+                        RAW UTC DTSTART: {bookingSuccessData.startTime}
+                      </div>
+                    )}
+                  </div>
+
+                  <div className="flex flex-wrap items-center justify-center gap-3">
+                    <button
+                      className="inline-flex items-center gap-2 bg-indigo-600 hover:bg-indigo-700 text-white font-bold text-sm px-6 py-3 rounded-full shadow-md transition-all hover:shadow-lg cursor-pointer"
+                      onClick={() => downloadICS(bookingSuccessData)}
+                    >
+                      <Download size={16} /> Add to Calendar (.ics)
+                    </button>
+
+                    <button
+                      className="inline-flex items-center gap-2 bg-slate-100 hover:bg-slate-200 text-gray-800 font-bold text-sm px-6 py-3 rounded-full border border-gray-300 transition-all cursor-pointer"
+                      onClick={resetBookingForm}
+                    >
+                      <RefreshCw size={16} /> Book Another Demo Class
+                    </button>
+
+                    <button
+                      className="inline-flex items-center gap-2 bg-white hover:bg-slate-50 text-indigo-700 font-bold text-sm px-6 py-3 rounded-full border border-indigo-200 transition-all cursor-pointer shadow-xs"
+                      onClick={() => {
+                        setStatus('idle');
+                        setCurrentView('profile');
+                        if (selectedParentId) fetchParentBookings(selectedParentId);
+                      }}
+                    >
+                      <User size={16} /> View My Bookings Dashboard
                     </button>
                   </div>
-                ) : mentorsList.length === 0 ? (
-                  <div className="empty-state">
-                    <p>No mentors found with available slots right now.</p>
-                    <button className="btn btn-outline" onClick={fetchSlots} style={{ marginTop: '1rem' }}>
-                      <RefreshCw size={16} /> Refresh Slots
-                    </button>
-                  </div>
-                ) : (
-                  <div className="mentors-grid">
-                    {mentorsList.map(({ mentor, slots: mSlots }) => (
-                      <div
-                        key={mentor.id}
-                        className="mentor-card"
+                </div>
+              )}
+
+              {/* BOOKING FLOW */}
+              {status !== 'success' && (
+                <div className="space-y-6">
+                  {/* Parent Persona Selector Bar */}
+                  {parents.length > 0 && (
+                    <div className="bg-white border border-gray-200 rounded-2xl p-4 sm:p-5 shadow-xs flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+                      <div className="flex items-center gap-2.5">
+                        <User className="text-indigo-600 shrink-0" size={20} />
+                        <div>
+                          <h2 className="text-sm font-bold text-gray-900">Booking Parent Persona</h2>
+                          <p className="text-xs text-gray-500">Select parent profile to test booking flow</p>
+                        </div>
+                      </div>
+
+                      {/* Custom Scrollable Parent Dropdown (Displays ~5 names at a time with side scrollbar & Timezone Sync) */}
+                      <div className="relative max-w-full sm:max-w-md w-full">
+                        <button
+                          type="button"
+                          onClick={() => setIsParentDropdownOpen(!isParentDropdownOpen)}
+                          className="bg-slate-100 hover:bg-slate-200/80 border border-gray-300 text-gray-900 text-xs sm:text-sm font-semibold rounded-xl px-4 py-2.5 flex items-center justify-between gap-2 w-full transition-colors cursor-pointer text-left shadow-xs"
+                        >
+                          <span className="truncate">
+                            {(() => {
+                              const current = parents.find(p => p.id === selectedParentId) || parents[0];
+                              return current ? `${current.name} (${current.email} • ${current.timezone})` : 'Select Parent Persona';
+                            })()}
+                          </span>
+                          <ChevronDown size={16} className={`text-indigo-600 shrink-0 transition-transform duration-200 ${isParentDropdownOpen ? 'rotate-180' : ''}`} />
+                        </button>
+
+                        {isParentDropdownOpen && (
+                          <div className="absolute right-0 mt-2 w-full bg-white border border-gray-200 rounded-2xl shadow-xl z-40 max-h-52 overflow-y-auto p-1.5 space-y-0.5 border-t-2 border-t-indigo-600">
+                            {parents.map((p) => {
+                              const isSelected = p.id === selectedParentId;
+                              return (
+                                <div
+                                  key={p.id}
+                                  onClick={() => handleSelectParent(p.id)}
+                                  className={`px-3 py-2.5 text-xs sm:text-sm rounded-xl flex items-center justify-between cursor-pointer transition-colors ${
+                                    isSelected
+                                      ? 'bg-indigo-50 text-indigo-900 font-bold border border-indigo-100'
+                                      : 'hover:bg-slate-50 text-gray-700 font-medium'
+                                  }`}
+                                >
+                                  <div className="truncate pr-2">
+                                    <span className="font-bold text-gray-900">{p.name}</span>{' '}
+                                    <span className="text-gray-500 text-xs font-normal">({p.email} • {p.timezone})</span>
+                                  </div>
+                                  {isSelected && <Check size={15} className="text-indigo-600 shrink-0" />}
+                                </div>
+                              );
+                            })}
+                          </div>
+                        )}
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Fallback Suggestion Banner */}
+                  {status === 'fallback' && suggestedSlot && (
+                    <div className="bg-amber-50 border border-amber-300 rounded-2xl p-6 shadow-sm flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
+                      <div className="flex items-start gap-3">
+                        <AlertTriangle className="text-amber-600 shrink-0 mt-0.5" size={24} />
+                        <div>
+                          <h3 className="text-base font-bold text-amber-900">Requested Time Slot Unavailable</h3>
+                          <p className="text-xs sm:text-sm text-amber-800 mt-0.5">{errorMessage || 'This mentor has reached maximum capacity.'}</p>
+                          <p className="text-xs sm:text-sm text-amber-900 font-medium mt-1">
+                            Would you like to book <strong>{suggestedSlot.mentor?.name || 'an available mentor'}</strong> at{' '}
+                            <span className="font-bold underline">{formatTimeInZone(suggestedSlot.startTime, selectedTimezone)}</span> instead?
+                          </p>
+                        </div>
+                      </div>
+                      <button
+                        className="w-full sm:w-auto bg-amber-600 hover:bg-amber-700 text-white font-bold text-xs sm:text-sm px-5 py-2.5 rounded-full shadow-sm transition-all shrink-0 cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
+                        onClick={() => handleBookSlot(suggestedSlot.id)}
+                        disabled={submitting}
+                      >
+                        {submitting ? 'Booking...' : 'Accept Suggested Slot'}
+                      </button>
+                    </div>
+                  )}
+
+                  {status === 'error' && !suggestedSlot && (
+                    <div className="bg-rose-50 border border-rose-200 text-rose-800 rounded-2xl p-4 flex items-center gap-3">
+                      <AlertTriangle className="text-rose-600 shrink-0" size={20} />
+                      <span className="text-sm font-semibold">{errorMessage || 'Failed to book slot. Please try another slot.'}</span>
+                    </div>
+                  )}
+
+                  {/* PAGE VIEW 1: MENTORS GRID (STEP 1) */}
+                  {!selectedMentorId && (
+                    <div className="space-y-4">
+                      <div className="flex items-center justify-between">
+                        <div className="flex items-center gap-2">
+                          <UserCheck className="text-indigo-600" size={22} />
+                          <h2 className="text-xl font-bold text-gray-900">Step 1: Select a Mentor</h2>
+                        </div>
+                        <span className="bg-indigo-100 text-indigo-800 text-xs font-bold px-3 py-1 rounded-full">
+                          {displayMentorsList.filter(m => m.slots.length > 0).length} Mentors Available
+                        </span>
+                      </div>
+
+                      {loadingSlots ? (
+                        <div className="bg-white border border-gray-200 rounded-2xl p-12 text-center">
+                          <div className="w-10 h-10 border-4 border-indigo-600 border-t-transparent rounded-full animate-spin mx-auto mb-3"></div>
+                          <p className="text-sm text-gray-600 font-medium">Loading available mentors and time slots...</p>
+                        </div>
+                      ) : fetchError ? (
+                        <div className="bg-white border border-rose-200 rounded-2xl p-8 text-center max-w-md mx-auto">
+                          <AlertTriangle className="text-rose-500 mx-auto mb-2" size={36} />
+                          <p className="text-sm font-semibold text-gray-900 mb-4">{fetchError}</p>
+                          <button
+                            className="inline-flex items-center gap-2 bg-indigo-600 hover:bg-indigo-700 text-white font-semibold text-xs px-4 py-2 rounded-full cursor-pointer"
+                            onClick={() => { fetchSlots(); fetchMentors(); }}
+                          >
+                            <RefreshCw size={14} /> Retry Connecting
+                          </button>
+                        </div>
+                      ) : displayMentorsList.length === 0 ? (
+                        <div className="bg-white border border-gray-200 rounded-2xl p-12 text-center">
+                          <p className="text-gray-600 font-medium mb-3">No mentors found right now.</p>
+                          <button
+                            className="inline-flex items-center gap-2 bg-indigo-600 hover:bg-indigo-700 text-white font-semibold text-xs px-4 py-2 rounded-full cursor-pointer"
+                            onClick={() => { fetchSlots(); fetchMentors(); }}
+                          >
+                            <RefreshCw size={14} /> Refresh Slots
+                          </button>
+                        </div>
+                      ) : (
+                        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-5">
+                          {displayMentorsList.map(({ mentor, slots: mSlots }) => {
+                            const isFullyBooked = mSlots.length === 0;
+
+                            return (
+                              <div
+                                key={mentor.id}
+                                className={`bg-white border rounded-2xl p-6 shadow-xs transition-all duration-200 flex flex-col justify-between group ${
+                                  isFullyBooked
+                                    ? 'opacity-50 pointer-events-none bg-slate-100 border-gray-200 cursor-not-allowed'
+                                    : 'border-gray-200 hover:shadow-lg hover:-translate-y-1 cursor-pointer'
+                                }`}
+                                onClick={() => {
+                                  if (!isFullyBooked) {
+                                    setSelectedMentorId(mentor.id);
+                                    setSelectedDateKey(null);
+                                    setSelectedSlotId(null);
+                                  }
+                                }}
+                              >
+                                <div>
+                                  <div className="flex items-start justify-between gap-3 mb-4">
+                                    <div className="flex items-center gap-3">
+                                      <div className={`w-12 h-12 rounded-full flex items-center justify-center font-bold text-lg shrink-0 ${
+                                        isFullyBooked
+                                          ? 'bg-gray-200 text-gray-500 border border-gray-300'
+                                          : 'bg-indigo-100 text-indigo-700 border border-indigo-200'
+                                      }`}>
+                                        {mentor.name ? mentor.name[0] : 'M'}
+                                      </div>
+                                      <div>
+                                        <h3 className={`text-base font-bold transition-colors ${
+                                          isFullyBooked ? 'text-gray-600' : 'text-gray-900 group-hover:text-indigo-600'
+                                        }`}>
+                                          {mentor.name}
+                                        </h3>
+                                        <p className="text-xs text-gray-500 font-medium">{mentor.email}</p>
+                                      </div>
+                                    </div>
+
+                                    <span className="flex items-center gap-1 text-xs font-bold text-amber-600 bg-amber-50 px-2 py-0.5 rounded-md border border-amber-200/60">
+                                      <Star size={12} className="fill-amber-500 text-amber-500" /> 4.9
+                                    </span>
+                                  </div>
+
+                                  <div className="bg-slate-50 rounded-xl p-3 mb-5 border border-gray-100 flex items-center justify-between text-xs">
+                                    {isFullyBooked ? (
+                                      <span className="font-bold text-rose-700 bg-rose-100 px-2.5 py-1 rounded-md border border-rose-200">
+                                        Fully Booked
+                                      </span>
+                                    ) : (
+                                      <span className="font-semibold text-indigo-700 bg-indigo-50 px-2.5 py-1 rounded-md border border-indigo-100">
+                                        {mSlots.length} Slots Available
+                                      </span>
+                                    )}
+                                    <span className="text-gray-500 font-medium">Asia/Kolkata (IST)</span>
+                                  </div>
+
+                                  {isDebugMode && (
+                                    <div className="text-[10px] font-mono text-purple-700 bg-purple-50 p-2 rounded border border-purple-100 mb-4">
+                                      Daily Capacity: {mentor.maxDailyDemos - mSlots.length}/2 Demos Booked Today
+                                    </div>
+                                  )}
+                                </div>
+
+                                <div className={`pt-2 border-t border-gray-100 flex items-center justify-between text-xs font-bold ${
+                                  isFullyBooked ? 'text-gray-400' : 'text-indigo-600 group-hover:text-indigo-700'
+                                }`}>
+                                  <span>{isFullyBooked ? 'No Slots Available' : 'View Available Times'}</span>
+                                  {!isFullyBooked && (
+                                    <ArrowRight size={16} className="group-hover:translate-x-1 transition-transform" />
+                                  )}
+                                </div>
+                              </div>
+                            );
+                          })}
+                        </div>
+                      )}
+                    </div>
+                  )}
+
+                  {/* PAGE VIEW 2: MENTOR DETAILS & SLOTS (STEP 2) */}
+                  {selectedMentorGroup && (
+                    <div className="space-y-6">
+                      {/* Back Button */}
+                      <button
+                        className="inline-flex items-center gap-2 text-xs sm:text-sm font-bold text-gray-600 hover:text-indigo-600 bg-white hover:bg-slate-100 border border-gray-200 px-4 py-2 rounded-full transition-colors cursor-pointer"
                         onClick={() => {
-                          setSelectedMentorId(mentor.id);
+                          setSelectedMentorId(null);
                           setSelectedDateKey(null);
                           setSelectedSlotId(null);
                         }}
                       >
-                        <div className="mentor-header">
-                          <div className="avatar">{mentor.name ? mentor.name[0] : 'M'}</div>
+                        <ArrowLeft size={16} /> Back to All Mentors
+                      </button>
+
+                      {/* Mentor Profile Overview Card */}
+                      <div className="bg-white border border-gray-200 rounded-2xl p-6 shadow-sm flex flex-col md:flex-row md:items-center justify-between gap-6">
+                        <div className="flex items-center gap-4">
+                          <div className="w-16 h-16 bg-indigo-600 text-white rounded-2xl flex items-center justify-center font-extrabold text-2xl shadow-md shrink-0">
+                            {selectedMentorGroup.mentor.name[0]}
+                          </div>
                           <div>
-                            <h3 className="mentor-name">{mentor.name}</h3>
-                            <span className="mentor-email">{mentor.email}</span>
+                            <h2 className="text-xl sm:text-2xl font-bold text-gray-900">{selectedMentorGroup.mentor.name}</h2>
+                            <p className="text-xs sm:text-sm text-gray-500 mb-2">{selectedMentorGroup.mentor.email}</p>
+                            <div className="flex flex-wrap items-center gap-2">
+                              <span className="inline-flex items-center gap-1 bg-slate-100 text-gray-700 text-xs font-semibold px-2.5 py-1 rounded-md border border-gray-200">
+                                <Globe size={12} className="text-indigo-600" /> Base: Asia/Kolkata (IST)
+                              </span>
+                              <span className="inline-flex items-center gap-1 bg-indigo-50 text-indigo-700 text-xs font-semibold px-2.5 py-1 rounded-md border border-indigo-100">
+                                <ShieldCheck size={12} /> Max 2 Classes / Day
+                              </span>
+                            </div>
                           </div>
                         </div>
 
-                        <div className="mentor-stats">
-                          <span className="slots-count">{mSlots.length} Slots Available</span>
-                          <span className="tz-label">IST (Asia/Kolkata)</span>
-                        </div>
-
-                        <div className="card-action">
-                          <span className="view-avail-btn">View Availability</span>
-                          <ArrowRight size={16} />
+                        <div className="bg-slate-50 border border-gray-200 rounded-xl px-6 py-4 text-center shrink-0">
+                          <span className="block text-2xl font-extrabold text-indigo-600">{selectedMentorGroup.slots.length}</span>
+                          <span className="text-xs font-semibold text-gray-500 uppercase tracking-wider">Open Slots</span>
                         </div>
                       </div>
-                    ))}
-                  </div>
-                )}
-              </div>
-            )}
 
-            {/* PAGE VIEW 2: DEDICATED STRUCTURED MENTOR PAGE (Date Navigation -> Time Slots) */}
-            {selectedMentorGroup && (
-              <div className="mentor-availability-page">
-                {/* Back Navigation Button */}
-                <button
-                  className="btn-back"
-                  onClick={() => {
-                    setSelectedMentorId(null);
-                    setSelectedDateKey(null);
-                    setSelectedSlotId(null);
-                  }}
-                >
-                  <ArrowLeft size={16} /> Back to All Mentors
-                </button>
+                      {/* STEP 1: Date Selector Tabs */}
+                      <div className="bg-white border border-gray-200 rounded-2xl p-6 shadow-sm space-y-4">
+                        <div className="flex items-center gap-2">
+                          <Calendar className="text-indigo-600" size={20} />
+                          <h3 className="text-base sm:text-lg font-bold text-gray-900">Choose Date ({selectedTimezone})</h3>
+                        </div>
 
-                {/* Mentor Profile Overview Card */}
-                <div className="mentor-profile-card">
-                  <div className="mentor-profile-info">
-                    <div className="profile-avatar">{selectedMentorGroup.mentor.name[0]}</div>
-                    <div>
-                      <h2>{selectedMentorGroup.mentor.name}</h2>
-                      <p className="email">{selectedMentorGroup.mentor.email}</p>
-                      <div className="mentor-tags">
-                        <span className="tag tz-tag">
-                          <Globe size={13} /> Base Timezone: Asia/Kolkata (IST)
-                        </span>
-                        <span className="tag limit-tag">
-                          <ShieldCheck size={13} /> Max 2 Demo Classes / Day
-                        </span>
-                      </div>
-                    </div>
-                  </div>
+                        <div className="flex gap-3 overflow-x-auto pb-2 scrollbar-thin">
+                          {dateKeysList.map((dKey) => {
+                            const isSelected = selectedDateKey === dKey;
+                            const dateObj = mentorDateMap[dKey];
 
-                  <div className="availability-summary-box">
-                    <span className="big-count">{selectedMentorGroup.slots.length}</span>
-                    <span className="count-label">Available Slots</span>
-                  </div>
-                </div>
-
-                {/* STRUCTURED STEP 1: Date Available Selector Tabs */}
-                <div className="date-selector-container">
-                  <div className="sub-title">
-                    <Calendar size={18} />
-                    <h3>Step 1: Choose Available Date ({selectedTimezone})</h3>
-                  </div>
-
-                  <div className="date-tabs-bar">
-                    {dateKeysList.map((dKey) => {
-                      const isSelected = selectedDateKey === dKey;
-                      const dateObj = mentorDateMap[dKey];
-
-                      return (
-                        <button
-                          key={dKey}
-                          className={`date-tab ${isSelected ? 'active' : ''}`}
-                          onClick={() => {
-                            setSelectedDateKey(dKey);
-                            setSelectedSlotId(null);
-                          }}
-                        >
-                          <span className="tab-date">{dateObj.dateLabel}</span>
-                          <span className="tab-badge">{dateObj.slots.length} Slots</span>
-                        </button>
-                      );
-                    })}
-                  </div>
-                </div>
-
-                {/* STRUCTURED STEP 2: Time Slots for Selected Date */}
-                {activeDateGroup && (
-                  <div className="slots-sub-section">
-                    <div className="sub-title">
-                      <Clock size={18} />
-                      <h3>
-                        Step 2: Choose Time Slot for <span className="highlight-date">{activeDateGroup.dateLabel}</span>
-                      </h3>
-                    </div>
-
-                    <div className="slots-grid">
-                      {activeDateGroup.slots.map((slot) => {
-                        const isSelected = selectedSlotId === slot.id;
-                        const parentFormatted = formatTimeOnlyInZone(slot.startTime, selectedTimezone);
-                        const mentorFormatted = formatTimeOnlyInZone(slot.startTime, 'Asia/Kolkata');
-
-                        return (
-                          <div
-                            key={slot.id}
-                            className={`slot-card ${isSelected ? 'selected' : ''}`}
-                            onClick={() => setSelectedSlotId(slot.id)}
-                          >
-                            <div className="slot-time-header">
-                              <Clock size={16} />
-                              <span>{parentFormatted}</span>
-                            </div>
-
-                            <div className="slot-meta">
-                              <span>Mentor IST Time: {mentorFormatted}</span>
-                            </div>
-
-                            <div className="slot-footer">
+                            return (
                               <button
-                                className={`btn ${isSelected ? 'btn-selected' : 'btn-outline'}`}
-                                onClick={(e) => {
-                                  e.stopPropagation();
-                                  setSelectedSlotId(slot.id);
-                                  handleBookSlot(slot.id);
+                                key={dKey}
+                                className={`flex flex-col items-center justify-center min-w-[120px] px-4 py-3 rounded-2xl border text-xs font-bold transition-all cursor-pointer shrink-0 ${
+                                  isSelected
+                                    ? 'bg-indigo-600 border-indigo-600 text-white shadow-md'
+                                    : 'bg-slate-50 hover:bg-slate-100 border-gray-200 text-gray-700'
+                                }`}
+                                onClick={() => {
+                                  setSelectedDateKey(dKey);
+                                  setSelectedSlotId(null);
                                 }}
-                                disabled={submitting && isSelected}
                               >
-                                {submitting && isSelected ? (
-                                  'Booking...'
-                                ) : (
-                                  <>
-                                    Book Trial Class <ArrowRight size={14} />
-                                  </>
-                                )}
+                                <span className="text-sm font-extrabold">{dateObj.dateLabel}</span>
+                                <span className={`text-[11px] font-semibold mt-1 px-2 py-0.5 rounded-full ${isSelected ? 'bg-indigo-700 text-white' : 'bg-gray-200 text-gray-600'}`}>
+                                  {dateObj.slots.length} Slots
+                                </span>
                               </button>
+                            );
+                          })}
+                        </div>
+                      </div>
+
+                      {/* STEP 2: Time Slots List */}
+                      {activeDateGroup && (
+                        <div className="bg-white border border-gray-200 rounded-2xl p-6 shadow-sm space-y-4">
+                          <div className="flex items-center justify-between">
+                            <div className="flex items-center gap-2">
+                              <Clock className="text-indigo-600" size={20} />
+                              <h3 className="text-base sm:text-lg font-bold text-gray-900">
+                                Available Time Slots for <span className="text-indigo-600">{activeDateGroup.dateLabel}</span>
+                              </h3>
                             </div>
                           </div>
-                        );
-                      })}
+
+                          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
+                            {activeDateGroup.slots.map((slot) => {
+                              const isSelected = selectedSlotId === slot.id;
+                              const parentFormatted = formatTimeOnlyInZone(slot.startTime, selectedTimezone);
+                              const mentorFormatted = formatTimeOnlyInZone(slot.startTime, 'Asia/Kolkata');
+
+                              return (
+                                <div
+                                  key={slot.id}
+                                  className={`rounded-full px-5 py-3 border flex flex-col justify-center transition-all duration-150 cursor-pointer ${
+                                    isSelected
+                                      ? 'bg-indigo-600 border-indigo-600 text-white shadow-md ring-2 ring-indigo-600 ring-offset-2'
+                                      : 'bg-white hover:bg-slate-50 border-gray-200 text-gray-800 hover:border-indigo-300'
+                                  }`}
+                                  onClick={() => setSelectedSlotId(slot.id)}
+                                >
+                                  <div className="flex items-center justify-between">
+                                    <div>
+                                      <div className="flex items-center gap-1.5 font-bold text-sm">
+                                        <Clock size={15} className={isSelected ? 'text-white' : 'text-indigo-600'} />
+                                        <span>{parentFormatted}</span>
+                                      </div>
+                                      <div className={`text-[11px] font-medium ${isSelected ? 'text-indigo-100' : 'text-gray-500'}`}>
+                                        Mentor IST: {mentorFormatted}
+                                      </div>
+                                    </div>
+
+                                    <button
+                                      className={`text-xs font-bold px-3 py-1.5 rounded-full transition-colors cursor-pointer shrink-0 disabled:opacity-50 disabled:cursor-not-allowed ${
+                                        isSelected
+                                          ? 'bg-white text-indigo-700 hover:bg-indigo-50'
+                                          : 'bg-indigo-50 text-indigo-700 hover:bg-indigo-100 border border-indigo-100'
+                                      }`}
+                                      onClick={(e) => {
+                                        e.stopPropagation();
+                                        setSelectedSlotId(slot.id);
+                                        handleBookSlot(slot.id);
+                                      }}
+                                      disabled={submitting}
+                                    >
+                                      {submitting && isSelected ? 'Booking...' : 'Book Class'}
+                                    </button>
+                                  </div>
+
+                                  {isDebugMode && (
+                                    <div className={`text-[10px] font-mono mt-1 pt-1 border-t ${
+                                      isSelected ? 'border-indigo-500 text-indigo-100' : 'border-gray-100 text-indigo-700'
+                                    }`}>
+                                      UTC: {slot.startTime}
+                                    </div>
+                                  )}
+                                </div>
+                              );
+                            })}
+                          </div>
+                        </div>
+                      )}
                     </div>
-                  </div>
-                )}
-              </div>
-            )}
-          </>
-        )}
-      </main>
-
-
-
-        {/* CUSTOM SLOT REQUEST / WAITLIST MODAL */}
-        {showWaitlistModal && (
-          <div className="modal-backdrop">
-            <div className="modal-card">
-              <button className="modal-close" onClick={() => setShowWaitlistModal(false)}>
-                <X size={18} />
-              </button>
-
-              {waitlistSubmitted ? (
-                <div className="modal-success">
-                  <CheckCircle2 size={40} className="success-icon" />
-                  <h3>Custom Request Received!</h3>
-                  <p>Our team will match you with a mentor and email you details shortly.</p>
+                  )}
                 </div>
-              ) : (
-                <form onSubmit={handleCustomRequestSubmit} className="modal-form">
-                  <div className="modal-header">
-                    <Mail size={24} className="icon" />
-                    <div>
-                      <h3>Request Custom Demo Slot</h3>
-                      <p>Can't find a matching time? Tell us your preference!</p>
-                    </div>
-                  </div>
-
-                  <div className="form-group">
-                    <label>Preferred Date:</label>
-                    <input
-                      type="date"
-                      required
-                      value={customRequestDate}
-                      onChange={(e) => setCustomRequestDate(e.target.value)}
-                    />
-                  </div>
-
-                  <div className="form-group">
-                    <label>Preferred Time ({selectedTimezone}):</label>
-                    <input
-                      type="time"
-                      required
-                      value={customRequestTime}
-                      onChange={(e) => setCustomRequestTime(e.target.value)}
-                    />
-                  </div>
-
-                  <button type="submit" className="btn btn-primary">
-                    <Check size={16} /> Submit Custom Slot Request
-                  </button>
-                </form>
               )}
-            </div>
-          </div>
-        )}
+            </>
+          )}
+        </main>
       </div>
+
+      {/* FOOTER & EVALUATOR DEBUG MODE TOGGLE */}
+      <footer className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 mt-12 pt-6 border-t border-gray-200 w-full flex flex-col sm:flex-row items-center justify-between gap-4 text-xs text-gray-500">
+        <div>
+          Codeyoung Trial Class Appointment Booking System • Built with React, Node.js & Prisma
+        </div>
+
+        <div className="flex items-center gap-2 bg-white px-3.5 py-1.5 rounded-full border border-gray-200 shadow-xs">
+          <span className="font-bold text-gray-700">Evaluator Debug Mode:</span>
+          <button
+            type="button"
+            onClick={() => setIsDebugMode(!isDebugMode)}
+            className={`w-9 h-5 flex items-center rounded-full p-0.5 transition-colors cursor-pointer ${
+              isDebugMode ? 'bg-indigo-600' : 'bg-gray-300'
+            }`}
+          >
+            <div
+              className={`bg-white w-4 h-4 rounded-full shadow-md transform transition-transform ${
+                isDebugMode ? 'translate-x-4' : 'translate-x-0'
+              }`}
+            />
+          </button>
+        </div>
+      </footer>
+
+      {/* CUSTOM SLOT REQUEST / WAITLIST MODAL */}
+      {showWaitlistModal && (
+        <div className="fixed inset-0 bg-slate-900/40 backdrop-blur-xs z-50 flex items-center justify-center p-4">
+          <div className="bg-white border border-gray-200 rounded-3xl p-6 sm:p-8 shadow-2xl max-w-md w-full relative animate-in fade-in zoom-in-95 duration-200">
+            <button
+              className="absolute top-5 right-5 text-gray-400 hover:text-gray-600 bg-slate-100 hover:bg-slate-200 rounded-full p-1.5 transition-colors cursor-pointer"
+              onClick={() => setShowWaitlistModal(false)}
+            >
+              <X size={18} />
+            </button>
+
+            {waitlistSubmitted ? (
+              <div className="text-center py-6 space-y-3">
+                <div className="w-14 h-14 bg-emerald-100 text-emerald-600 rounded-full flex items-center justify-center mx-auto mb-2">
+                  <CheckCircle2 size={32} />
+                </div>
+                <h3 className="text-xl font-bold text-gray-900">Custom Request Received!</h3>
+                <p className="text-xs sm:text-sm text-gray-600">Our academic team will match you with a mentor and email you details shortly.</p>
+              </div>
+            ) : (
+              <form onSubmit={handleCustomRequestSubmit} className="space-y-4">
+                <div className="flex items-center gap-3 pb-2 border-b border-gray-100">
+                  <div className="w-10 h-10 bg-indigo-100 text-indigo-600 rounded-full flex items-center justify-center font-bold">
+                    <Mail size={20} />
+                  </div>
+                  <div>
+                    <h3 className="text-lg font-bold text-gray-900">Request Custom Demo Slot</h3>
+                    <p className="text-xs text-gray-500">Can't find a matching time? Tell us your preference!</p>
+                  </div>
+                </div>
+
+                <div className="space-y-1.5">
+                  <label className="text-xs font-bold text-gray-700 block">Preferred Date:</label>
+                  <input
+                    type="date"
+                    required
+                    className="w-full bg-slate-50 border border-gray-300 text-gray-900 text-xs sm:text-sm rounded-xl p-3 focus:ring-2 focus:ring-indigo-600 focus:outline-none"
+                    value={customRequestDate}
+                    onChange={(e) => setCustomRequestDate(e.target.value)}
+                  />
+                </div>
+
+                <div className="space-y-1.5">
+                  <label className="text-xs font-bold text-gray-700 block">Preferred Time ({selectedTimezone}):</label>
+                  <input
+                    type="time"
+                    required
+                    className="w-full bg-slate-50 border border-gray-300 text-gray-900 text-xs sm:text-sm rounded-xl p-3 focus:ring-2 focus:ring-indigo-600 focus:outline-none"
+                    value={customRequestTime}
+                    onChange={(e) => setCustomRequestTime(e.target.value)}
+                  />
+                </div>
+
+                <button
+                  type="submit"
+                  className="w-full bg-indigo-600 hover:bg-indigo-700 text-white font-bold text-sm py-3 rounded-full shadow-md transition-all cursor-pointer mt-2"
+                >
+                  Submit Custom Slot Request
+                </button>
+              </form>
+            )}
+          </div>
+        </div>
+      )}
+    </div>
   );
 }

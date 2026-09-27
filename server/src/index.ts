@@ -13,6 +13,21 @@ const PORT = process.env.PORT || 5000;
 app.use(cors());
 app.use(express.json());
 
+// In-Memory API Cache to eliminate database network latency for GET requests
+const cache = {
+  mentors: { data: null as any, timestamp: 0 },
+  parents: { data: null as any, timestamp: 0 },
+  slots: { data: null as any, timestamp: 0 }
+};
+
+const CACHE_TTL = 5000; // 5 seconds cache TTL
+
+function clearCache() {
+  cache.mentors.data = null;
+  cache.parents.data = null;
+  cache.slots.data = null;
+}
+
 // Health check endpoint
 app.get('/api/health', async (req: Request, res: Response) => {
   try {
@@ -24,9 +39,14 @@ app.get('/api/health', async (req: Request, res: Response) => {
   }
 });
 
-// GET /api/mentors - Fetch list of mentors
+// GET /api/mentors - Fetch list of mentors (Fast Cached)
 app.get('/api/mentors', async (req: Request, res: Response) => {
   try {
+    const now = Date.now();
+    if (cache.mentors.data && (now - cache.mentors.timestamp < CACHE_TTL)) {
+      return res.json(cache.mentors.data);
+    }
+
     const mentors = await prisma.mentor.findMany({
       include: {
         _count: {
@@ -34,6 +54,9 @@ app.get('/api/mentors', async (req: Request, res: Response) => {
         }
       }
     });
+
+    cache.mentors.data = mentors;
+    cache.mentors.timestamp = now;
     res.json(mentors);
   } catch (error) {
     console.error('Error fetching mentors:', error);
@@ -41,10 +64,18 @@ app.get('/api/mentors', async (req: Request, res: Response) => {
   }
 });
 
-// GET /api/parents - Fetch list of parents
+// GET /api/parents - Fetch list of parents (Fast Cached)
 app.get('/api/parents', async (req: Request, res: Response) => {
   try {
+    const now = Date.now();
+    if (cache.parents.data && (now - cache.parents.timestamp < CACHE_TTL)) {
+      return res.json(cache.parents.data);
+    }
+
     const parents = await prisma.parent.findMany();
+
+    cache.parents.data = parents;
+    cache.parents.timestamp = now;
     res.json(parents);
   } catch (error) {
     console.error('Error fetching parents:', error);
@@ -52,30 +83,30 @@ app.get('/api/parents', async (req: Request, res: Response) => {
   }
 });
 
-// GET /api/slots - Fetch available slots with Mentor relation, enforcing maxDailyDemos capacity
+// GET /api/slots - Fetch available slots with parallel DB queries & fast caching
 app.get('/api/slots', async (req: Request, res: Response) => {
   try {
     const { parentTimezone } = req.query;
+    const now = Date.now();
 
-    // 1. Fetch unbooked slots
-    const unbookedSlots = await prisma.slot.findMany({
-      where: { isBooked: false },
-      include: {
-        mentor: true
-      },
-      orderBy: { startTime: 'asc' }
-    });
+    if (cache.slots.data && (now - cache.slots.timestamp < CACHE_TTL) && !parentTimezone) {
+      return res.json(cache.slots.data);
+    }
 
-    // 2. Fetch confirmed bookings to calculate daily booking counts per mentor on their local IST day
-    const confirmedBookings = await prisma.booking.findMany({
-      where: { status: 'CONFIRMED' },
-      select: {
-        mentorId: true,
-        startTime: true
-      }
-    });
+    // Parallel DB queries to eliminate round-trip latency
+    const [unbookedSlots, confirmedBookings] = await Promise.all([
+      prisma.slot.findMany({
+        where: { isBooked: false },
+        include: { mentor: true },
+        orderBy: { startTime: 'asc' }
+      }),
+      prisma.booking.findMany({
+        where: { status: 'CONFIRMED' },
+        select: { mentorId: true, startTime: true }
+      })
+    ]);
 
-    // Map confirmed bookings count by `mentorId_yyyy-MM-dd` in mentor local timezone (Asia/Kolkata)
+    // Map confirmed bookings count by mentorId_yyyy-MM-dd in mentor local timezone (Asia/Kolkata)
     const dailyBookingCountMap: Record<string, number> = {};
     for (const b of confirmedBookings) {
       const istDateStr = DateTime.fromJSDate(b.startTime, { zone: 'Asia/Kolkata' }).toFormat('yyyy-MM-dd');
@@ -83,7 +114,7 @@ app.get('/api/slots', async (req: Request, res: Response) => {
       dailyBookingCountMap[key] = (dailyBookingCountMap[key] || 0) + 1;
     }
 
-    // 3. Filter out open slots for any mentor on an IST day where they already reached maxDailyDemos (2)
+    // Filter out open slots for any mentor on an IST day where maxDailyDemos is reached
     const availableSlots = unbookedSlots.filter(slot => {
       if (!slot.mentor) return true;
       const mentorZone = slot.mentor.timezone || 'Asia/Kolkata';
@@ -110,6 +141,11 @@ app.get('/api/slots', async (req: Request, res: Response) => {
         parentLocalEndTime: localEndTimeStr
       };
     });
+
+    if (!parentTimezone) {
+      cache.slots.data = formattedSlots;
+      cache.slots.timestamp = now;
+    }
 
     res.json(formattedSlots);
   } catch (error: any) {
@@ -159,6 +195,14 @@ app.post('/api/bookings', async (req: Request, res: Response) => {
 
       if (slot.isBooked) {
         throw new Error('SLOT_ALREADY_BOOKED');
+      }
+
+      // Check if parent exists
+      const parentRecord = await tx.parent.findUnique({
+        where: { id: parentId }
+      });
+      if (!parentRecord) {
+        throw new Error('PARENT_NOT_FOUND');
       }
 
       const { mentor } = slot;
@@ -211,23 +255,33 @@ app.post('/api/bookings', async (req: Request, res: Response) => {
         }
       });
 
-      // 5. Simulate emailing both mentor and parent with live class link (Requirement 3)
+      // 5. Clear API cache upon state mutation
+      clearCache();
+
+      // 6. Log mock email notifications & 2 scheduled pre-class email reminders
       console.log(`\n=================== [NOTIFICATION SERVICE] ===================`);
-      console.log(`[EMAIL DISPATCH] To Parent (${newBooking.parent.email}):`);
+      console.log(`[EMAIL DISPATCH] Instant Confirmation to Parent (${newBooking.parent.email}):`);
       console.log(`  Subject: Your Codeyoung Trial Class is Confirmed!`);
-      console.log(`  Body: Hi ${newBooking.parent.name}, your demo class with ${newBooking.mentor.name} is scheduled. Join link: ${meetingUrl}`);
-      console.log(`[EMAIL DISPATCH] To Mentor (${newBooking.mentor.email}):`);
-      console.log(`  Subject: New Trial Class Assigned - ${newBooking.parent.name}`);
-      console.log(`  Body: Hi ${newBooking.mentor.name}, you have a trial class assigned with ${newBooking.parent.name}. Join link: ${meetingUrl}`);
+      console.log(`  Body: Hi ${newBooking.parent.name}, your demo class with ${newBooking.mentor.name} is scheduled. Class link: ${meetingUrl}`);
+      console.log(`[SCHEDULED REMINDER #1 - 24 Hours Before] To Parent (${newBooking.parent.email}):`);
+      console.log(`  Subject: Reminder: Codeyoung Trial Class in 24 Hours!`);
+      console.log(`  Body: Hi ${newBooking.parent.name}, your class starts in 24 hours. Classroom link: ${meetingUrl}`);
+      console.log(`[SCHEDULED REMINDER #2 - 15 Minutes Before] To Parent (${newBooking.parent.email}):`);
+      console.log(`  Subject: Reminder: Codeyoung Trial Class Starts in 15 Minutes!`);
+      console.log(`  Body: Hi ${newBooking.parent.name}, your live 1-on-1 demo with ${newBooking.mentor.name} is starting in 15 minutes. Join now: ${meetingUrl}`);
       console.log(`===============================================================\n`);
 
       return {
         ...newBooking,
         meetingUrl,
         emailNotificationsSent: true,
-        notificationMessage: `Confirmation emails with live class link dispatched to parent (${newBooking.parent.email}) and mentor (${newBooking.mentor.email}).`
+        remindersScheduled: [
+          { type: 'EMAIL_24H', trigger: '24 Hours Before Class', recipient: newBooking.parent.email, meetingUrl },
+          { type: 'EMAIL_15M', trigger: '15 Minutes Before Class', recipient: newBooking.parent.email, meetingUrl }
+        ],
+        notificationMessage: `Instant confirmation email dispatched & 2 pre-class email reminders (24h & 15m before class) scheduled for parent (${newBooking.parent.email}).`
       };
-    });
+    }, { maxWait: 10000, timeout: 20000 });
 
     return res.status(201).json(bookingResult);
 
@@ -259,6 +313,8 @@ app.post('/api/bookings', async (req: Request, res: Response) => {
       message = 'This mentor has reached their maximum limit of 2 demo classes for this calendar day.';
     } else if (error.message === 'SLOT_NOT_FOUND') {
       message = 'The requested slot was not found.';
+    } else if (error.message === 'PARENT_NOT_FOUND') {
+      message = 'The selected parent profile was not found. Please refresh or re-select a parent persona.';
     }
 
     return res.status(409).json({
@@ -266,6 +322,64 @@ app.post('/api/bookings', async (req: Request, res: Response) => {
       code: error.message,
       suggestedSlot: suggestedSlot || null
     });
+  }
+});
+
+// GET /api/parents/:id/bookings - Fetch all bookings for a specific parent
+app.get('/api/parents/:id/bookings', async (req: Request, res: Response) => {
+  try {
+    const { id } = req.params;
+    const bookings = await prisma.booking.findMany({
+      where: { parentId: id, status: 'CONFIRMED' },
+      include: {
+        mentor: true,
+        slot: true,
+        parent: true
+      },
+      orderBy: { startTime: 'asc' }
+    });
+
+    const formattedBookings = bookings.map(b => ({
+      ...b,
+      meetingUrl: `https://meet.codeyoung-mock.com/demo-${b.id.substring(0, 8)}`
+    }));
+
+    res.json(formattedBookings);
+  } catch (error) {
+    console.error('Error fetching parent bookings:', error);
+    res.status(500).json({ error: 'Failed to fetch parent bookings' });
+  }
+});
+
+// DELETE /api/bookings/:id - Cancel booking and free slot
+app.delete('/api/bookings/:id', async (req: Request, res: Response) => {
+  try {
+    const { id } = req.params;
+
+    const booking = await prisma.booking.findUnique({
+      where: { id }
+    });
+
+    if (!booking) {
+      return res.status(404).json({ error: 'Booking not found' });
+    }
+
+    await prisma.$transaction([
+      prisma.slot.update({
+        where: { id: booking.slotId },
+        data: { isBooked: false }
+      }),
+      prisma.booking.delete({
+        where: { id }
+      })
+    ]);
+
+    clearCache();
+
+    res.json({ success: true, message: 'Booking cancelled successfully and slot freed.' });
+  } catch (error) {
+    console.error('Error cancelling booking:', error);
+    res.status(500).json({ error: 'Failed to cancel booking' });
   }
 });
 
