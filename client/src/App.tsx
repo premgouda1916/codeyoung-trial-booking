@@ -900,6 +900,24 @@ export default function App() {
                         </div>
                       </div>
 
+                      {slots.length === 0 && !loadingSlots && !fetchError && (
+                        <div className="bg-amber-50 border border-amber-300 rounded-2xl p-6 text-center max-w-2xl mx-auto my-4 space-y-3 shadow-sm">
+                          <div className="w-12 h-12 bg-amber-100 text-amber-700 rounded-full flex items-center justify-center mx-auto">
+                            <AlertTriangle size={24} />
+                          </div>
+                          <h3 className="text-base sm:text-lg font-bold text-amber-900">All Mentors are Currently Fully Booked</h3>
+                          <p className="text-xs sm:text-sm text-amber-800 max-w-md mx-auto">
+                            All daily demo slots for our top mentors are reserved. You can request a custom time slot or join our priority waitlist!
+                          </p>
+                          <button
+                            className="inline-flex items-center gap-2 bg-indigo-600 hover:bg-indigo-700 text-white font-bold text-xs sm:text-sm px-5 py-2.5 rounded-full shadow-sm cursor-pointer transition-all hover:shadow-md"
+                            onClick={() => setShowWaitlistModal(true)}
+                          >
+                            <Mail size={15} /> Request Custom Time Slot / Join Waitlist
+                          </button>
+                        </div>
+                      )}
+
                       {loadingSlots ? (
                         <div className="bg-white border border-gray-200 rounded-2xl p-12 text-center">
                           <div className="w-10 h-10 border-4 border-indigo-600 border-t-transparent rounded-full animate-spin mx-auto mb-3"></div>
