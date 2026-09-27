@@ -405,6 +405,16 @@ export default function App() {
     return DateTime.fromISO(isoString).setZone(zone).toFormat('h:mm a (z)');
   };
 
+  const getMentorRating = (m: { id?: string; name?: string }): string => {
+    const ratings = ['4.9', '4.8', '4.7', '4.9', '4.6', '4.8', '4.7', '4.9', '4.6', '4.8'];
+    let hash = 0;
+    const identifier = m?.name || m?.id || 'mentor';
+    for (let i = 0; i < identifier.length; i++) {
+      hash = (hash + identifier.charCodeAt(i) * (i + 1)) % ratings.length;
+    }
+    return ratings[hash];
+  };
+
   const resetBookingForm = () => {
     setStatus('idle');
     setBookingSuccessData(null);
@@ -475,6 +485,11 @@ export default function App() {
               >
                 <Mail size={15} className="text-indigo-600" /> Request Custom Time Slot
               </button>
+
+              <div className="inline-flex items-center gap-1.5 bg-emerald-50 text-emerald-900 text-xs sm:text-sm font-extrabold px-4 py-2.5 rounded-full border border-emerald-200/80 shadow-2xs">
+                <Clock size={16} className="text-emerald-600 shrink-0" />
+                <span>{slots.length} Total Slots Available</span>
+              </div>
             </div>
 
             {/* View Mode Navigation Switch (Book Class vs My Bookings Dashboard) */}
@@ -523,9 +538,15 @@ export default function App() {
                   </div>
                 </div>
 
-                <div className="bg-slate-50 border border-gray-200 rounded-xl px-5 py-3 text-center shrink-0">
-                  <span className="block text-2xl font-extrabold text-indigo-600">{parentBookings.length}</span>
-                  <span className="text-xs font-semibold text-gray-500 uppercase tracking-wider">Scheduled Classes</span>
+                <div className="flex items-center gap-3 shrink-0">
+                  <div className="bg-slate-50 border border-gray-200 rounded-xl px-4 py-3 text-center">
+                    <span className="block text-2xl font-extrabold text-indigo-600">{parentBookings.length}</span>
+                    <span className="text-xs font-semibold text-gray-500 uppercase tracking-wider">Scheduled Classes</span>
+                  </div>
+                  <div className="bg-emerald-50 border border-emerald-200 rounded-xl px-4 py-3 text-center">
+                    <span className="block text-2xl font-extrabold text-emerald-700">{slots.length}</span>
+                    <span className="text-xs font-semibold text-emerald-800 uppercase tracking-wider">Total Slots Open</span>
+                  </div>
                 </div>
               </div>
 
@@ -854,14 +875,20 @@ export default function App() {
                   {/* PAGE VIEW 1: MENTORS GRID (STEP 1) */}
                   {!selectedMentorId && (
                     <div className="space-y-4">
-                      <div className="flex items-center justify-between">
+                      <div className="flex flex-wrap items-center justify-between gap-3">
                         <div className="flex items-center gap-2">
                           <UserCheck className="text-indigo-600" size={22} />
                           <h2 className="text-xl font-bold text-gray-900">Step 1: Select a Mentor</h2>
                         </div>
-                        <span className="bg-indigo-100 text-indigo-800 text-xs font-bold px-3 py-1 rounded-full">
-                          {displayMentorsList.filter(m => m.slots.length > 0).length} Mentors Available
-                        </span>
+                        <div className="flex flex-wrap items-center gap-2">
+                          <span className="bg-emerald-100 text-emerald-900 text-xs sm:text-sm font-extrabold px-3.5 py-1.5 rounded-full border border-emerald-300 flex items-center gap-1.5 shadow-2xs">
+                            <Clock size={14} className="text-emerald-700" />
+                            {slots.length} Total Slots Available
+                          </span>
+                          <span className="bg-indigo-100 text-indigo-900 text-xs sm:text-sm font-bold px-3.5 py-1.5 rounded-full border border-indigo-200">
+                            {displayMentorsList.filter(m => m.slots.length > 0).length} Mentors Available
+                          </span>
+                        </div>
                       </div>
 
                       {loadingSlots ? (
@@ -931,8 +958,8 @@ export default function App() {
                                       </div>
                                     </div>
 
-                                    <span className="flex items-center gap-1 text-xs font-bold text-amber-600 bg-amber-50 px-2 py-0.5 rounded-md border border-amber-200/60">
-                                      <Star size={12} className="fill-amber-500 text-amber-500" /> 4.9
+                                    <span className="flex items-center gap-1 text-xs font-bold text-amber-700 bg-amber-50 px-2.5 py-1 rounded-lg border border-amber-200/80">
+                                      <Star size={13} className="fill-amber-500 text-amber-500" /> {getMentorRating(mentor)}
                                     </span>
                                   </div>
 
@@ -997,6 +1024,9 @@ export default function App() {
                             <h2 className="text-xl sm:text-2xl font-bold text-gray-900">{selectedMentorGroup.mentor.name}</h2>
                             <p className="text-xs sm:text-sm text-gray-500 mb-2">{selectedMentorGroup.mentor.email}</p>
                             <div className="flex flex-wrap items-center gap-2">
+                              <span className="inline-flex items-center gap-1 bg-amber-50 text-amber-800 text-xs font-bold px-2.5 py-1 rounded-md border border-amber-200">
+                                <Star size={13} className="fill-amber-500 text-amber-500" /> Rating: {getMentorRating(selectedMentorGroup.mentor)} / 5.0
+                              </span>
                               <span className="inline-flex items-center gap-1 bg-slate-100 text-gray-700 text-xs font-semibold px-2.5 py-1 rounded-md border border-gray-200">
                                 <Globe size={12} className="text-indigo-600" /> Base: Asia/Kolkata (IST)
                               </span>
