@@ -327,8 +327,13 @@ codeyoung-trial-booking/
 
 ---
 
-## 📬 Candidate Submission Information
+## 👤 Candidate & Project Metadata
 
-- **Candidate Submission Email**: `campus.ka@talentiseglobal.com`
-- **Deadline**: September 28th, 2026 (Latest by 6:00 PM)
-- **Subject Line Format**: `Codeyoung Assignment Task - <Candidate Name> - Institute Name (ABBR)`
+- **Candidate Name**: Prem Gouda
+- **College / Institute**: Yenepoya Institute of Technology, Mangalore (YIT)
+- **Contact Number**: +91 7204970418
+- **LinkedIn Profile**: [linkedin.com/in/prem-gouda](https://www.linkedin.com/in/prem-gouda/)
+- **GitHub Repository**: [github.com/premgouda1916/codeyoung-trial-booking](https://github.com/premgouda1916/codeyoung-trial-booking)
+- **Submission Recipient**: `campus.ka@talentiseglobal.com`
+- **Submission Deadline**: September 28th, 2026 (Latest by 6:00 PM IST)
+- **Email Subject Line**: `Codeyoung Assignment Task - Prem Gouda - YIT`
