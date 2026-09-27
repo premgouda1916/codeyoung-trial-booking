@@ -592,8 +592,14 @@ and also explain what makes this application different and also explain the spec
    - **System Workflow & Application Lifecycle Flowchart**: Visualizing end-to-end user navigation, persona selection, timezone resolution, atomic database booking, and 2-stage notification scheduling.
    - **Timezone Conversion & DST Architecture Diagram**: Detailing how UTC ISO 8601 timestamps are stored in PostgreSQL, how Luxon converts them for international parent timezones (`America/New_York`, `Europe/London`, `America/Los_Angeles`), how DST shifts are calculated, and how local IST (`Asia/Kolkata`) day boundaries are enforced for mentor capacity checks.
    - **Concurrency & Double-Booking Sequence Diagram**: Visualizing Prisma `$transaction` row locks and atomic capacity evaluation.
-2. **Key Differentiators & Special Features Matrix**: Highlighting zero-flicker state-equalized background polling, 2-stage pre-class notification engine, parent profile dashboard, clear meeting link accessibility, custom waitlist modal, and evaluator debug mode.
-3. **Architecture, Setup & Testing Guides**: Complete step-by-step installation instructions for server and client, API documentation, and evaluator testing steps.
+### 2026-09-27 17:05:00 UTC
+**User:** there are some errors in the readme which is not working properly solve it
+
+**AI:** Fixed all Mermaid diagram parse errors in `README.md`:
+1. **Flowchart Node Label Quoting**: Wrapped all node labels containing special characters, brackets, slashes, or emojis in double quotes (e.g. `H["📡 POST /api/bookings"]`).
+2. **Removed Reserved Syntax**: Removed unquoted `{slotId, parentId}` curly braces inside rectangular node labels that caused Mermaid to misinterpret labels as diamond decision starts.
+3. **Parallel Arrow Syntax**: Updated flowchart branching syntax to valid single-target arrows (`P --> T` and `Q --> T`).
+4. **Sequence Diagram Quotes & Block Syntax**: Cleaned up participant aliases, `Note over`, and `par ... and` blocks across the Timezone Architecture and Concurrency sequence diagrams for 100% clean GitHub Markdown rendering.
 
 
 

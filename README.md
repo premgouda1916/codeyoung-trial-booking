@@ -29,38 +29,39 @@ The diagram below maps the complete user journey from parent persona selection t
 
 ```mermaid
 flowchart TD
-    A[👤 Parent Selects Profile & Timezone] --> B[🔍 Browse Available Mentors & Slots]
-    B --> C{Mentors Available?}
-    C -- No / Fully Booked --> D[📝 Submit Custom Time Slot / Waitlist Request]
-    C -- Yes --> E[📅 Select Date & Convenient Local Time Slot]
-    E --> F[👆 Click 'Book Trial Class']
+    A["👤 Parent Selects Profile & Timezone"] --> B["🔍 Browse Available Mentors & Slots"]
+    B --> C{"Mentors Available?"}
+    C -- "No / Fully Booked" --> D["📝 Submit Custom Slot / Waitlist Request"]
+    C -- "Yes" --> E["📅 Select Date & Convenient Local Slot"]
+    E --> F["👆 Click Book Trial Class"]
     
-    subgraph Frontend Optimistic UI
-        F --> G[⚡ Immediate UI Slot Removal & 'Booking...' Button State]
+    subgraph UI ["Frontend Optimistic UI"]
+        F --> G["⚡ Immediate UI Slot Removal & Booking State"]
     end
 
-    G --> H[📡 POST /api/bookings {slotId, parentId}]
+    G --> H["📡 POST /api/bookings"]
 
-    subgraph Backend Atomic Database Transaction
-        H --> I[🔒 Acquire Row Lock on Slot]
-        I --> J{Slot Already Booked?}
-        J -- Yes --> K[❌ Rollback Transaction & Return 409 Conflict]
-        J -- No --> L{Mentor Max Daily Demos >= 2 IST?}
-        L -- Yes --> K
-        L -- No --> M[✅ UPDATE Slot isBooked=true & INSERT Booking]
+    subgraph DB ["Backend Database Transaction"]
+        H --> I["🔒 Acquire Lock on Slot"]
+        I --> J{"Slot Already Booked?"}
+        J -- "Yes" --> K["❌ Rollback Transaction & Return 409 Conflict"]
+        J -- "No" --> L{"Mentor Max Daily Demos >= 2 IST?"}
+        L -- "Yes" --> K
+        L -- "No" --> M["✅ UPDATE Slot isBooked=true & INSERT Booking"]
     end
 
-    K --> N[🔄 Revert UI State & Render Alternative Mentor Suggestion]
-    M --> O[🎉 HTTP 201 Created & Instant Email Confirmation Logged]
+    K --> N["🔄 Revert UI State & Render Alternative Suggestion"]
+    M --> O["🎉 HTTP 201 Created & Instant Email Confirmation"]
 
-    subgraph 2-Stage Notification Engine
-        O --> P[📩 Schedule Pre-Class Email 1: 24 Hours Before Class]
-        O --> Q[📩 Schedule Pre-Class Email 2: 15 Minutes Before Class]
-        O --> R[📅 Generate .ics File with 2 Built-in VALARM Device Alarms]
+    subgraph Reminders ["2-Stage Notification Engine"]
+        O --> P["📩 Schedule Email 1: 24 Hours Before Class"]
+        O --> Q["📩 Schedule Email 2: 15 Minutes Before Class"]
+        O --> R["📅 Generate .ics File with 2 VALARM Device Alarms"]
     end
 
-    R --> S[📱 Parent Adds Invite to iOS / Android / Google / Outlook Calendar]
-    P & Q --> T[✨ 100% On-Time Class Attendance Guaranteed]
+    R --> S["📱 Parent Adds Invite to Device Calendar"]
+    P --> T["✨ 100% On-Time Class Attendance"]
+    Q --> T
 ```
 
 ---
@@ -88,7 +89,7 @@ sequenceDiagram
     autonumber
     actor Parent as Parent (New York / London)
     participant Client as React Frontend (Luxon)
-    participant Server as Express Server
+    participant Server as Express API Server
     participant MentorZone as Mentor IST Engine (Asia/Kolkata)
     participant DB as PostgreSQL (UTC Storage)
 
@@ -101,11 +102,11 @@ sequenceDiagram
         Note over Client: Formatted: Mon, Sep 28 @ 3:30 PM (BST)
     end
 
-    Client->>Server: POST /api/bookings { slotId: "slot-123", parentId: "parent-456" }
-    Server->>MentorZone: Convert 2026-09-28T14:30:00.000Z to Asia/Kolkata (IST UTC+5:30)
+    Client->>Server: POST /api/bookings (slotId, parentId)
+    Server->>MentorZone: Convert UTC timestamp to Asia/Kolkata (IST UTC+5:30)
     Note over MentorZone: Mentor Local Time: Mon, Sep 28 @ 8:00 PM (IST)<br/>IST Local Day Window: Sep 28 00:00 IST to Sep 28 23:59 IST
 
-    Server->>DB: COUNT Bookings WHERE mentorId = "m1" AND IST_Day_Range
+    Server->>DB: COUNT Bookings WHERE mentorId = m1 AND IST_Day_Range
     alt IST Daily Bookings < 2
         DB-->>Server: Count = 1 (Within Capacity Limit)
         Server->>DB: Commit Booking & Update Slot
@@ -127,16 +128,17 @@ sequenceDiagram
     autonumber
     actor ParentA as Parent A (New York)
     actor ParentB as Parent B (London)
-    participant Server as Express API
-    participant DB as PostgreSQL ($transaction)
+    participant Server as Express API Server
+    participant DB as PostgreSQL Database
 
-    par Simultaneous Requests
+    par Concurrent Request A
         ParentA->>Server: POST /api/bookings (Slot 101)
+    and Concurrent Request B
         ParentB->>Server: POST /api/bookings (Slot 101)
     end
 
     rect rgb(240, 245, 255)
-        Note over Server,DB: Transaction A (Acquires Row Lock First)
+        Note over Server,DB: Transaction A (Acquires Lock First)
         Server->>DB: SELECT * FROM Slot WHERE id = 101 FOR UPDATE
         DB-->>Server: Slot Available (isBooked = false)
         Server->>DB: UPDATE Slot SET isBooked = true, INSERT Booking
@@ -152,7 +154,7 @@ sequenceDiagram
         Server-->>DB: Rollback Transaction B
     end
 
-    Server-->>ParentB: HTTP 409 Conflict (Rollback UI & Suggest Alternative Slot)
+    Server-->>ParentB: HTTP 409 Conflict (Rollback UI & Suggest Alternative)
 ```
 
 ---
