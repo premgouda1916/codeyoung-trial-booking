@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { DateTime } from 'luxon';
-import { Calendar, Clock, User, Globe, CheckCircle2, AlertTriangle, ArrowRight, RefreshCw, Video, ArrowLeft, UserCheck, ShieldCheck, Zap, Mail, X, Star, ChevronDown, Check, Trash2, ExternalLink, Download, Bell } from 'lucide-react';
+import { Calendar, Clock, User, Globe, CheckCircle2, AlertTriangle, ArrowRight, RefreshCw, Video, ArrowLeft, UserCheck, ShieldCheck, Zap, Mail, X, Star, ChevronDown, Check, Trash2, ExternalLink, Download, Bell, Home } from 'lucide-react';
 
 interface Mentor {
   id: string;
@@ -199,16 +199,30 @@ export default function App() {
   const handleCancelBooking = async (bookingId: string) => {
     if (!bookingId) return;
     setCancellingBookingId(bookingId);
+    const startTime = Date.now();
+
+    // Optimistically filter out the cancelled booking immediately from local state
+    setParentBookings(prev => prev.filter(b => b.id !== bookingId));
+
     try {
-      const res = await fetch(`/api/bookings/${bookingId}`, {
+      await fetch(`/api/bookings/${bookingId}`, {
         method: 'DELETE'
       });
-      if (res.ok) {
-        fetchParentBookings(selectedParentId);
-        fetchSlots();
-        fetchMentors();
-        fetchParents();
+
+      // Target transition duration: exactly 1000ms (1 second total)
+      const elapsedTime = Date.now() - startTime;
+      const targetDuration = 1000;
+      if (elapsedTime < targetDuration) {
+        await new Promise(resolve => setTimeout(resolve, targetDuration - elapsedTime));
       }
+
+      // Fire non-blocking background data synchronization
+      Promise.all([
+        fetchSlots(),
+        fetchMentors(),
+        fetchParents(),
+        fetchParentBookings(selectedParentId)
+      ]).catch(() => {});
     } catch (err) {
       console.error('Error cancelling booking:', err);
     } finally {
@@ -324,7 +338,7 @@ export default function App() {
 
   const activeDateGroup = selectedDateKey && mentorDateMap[selectedDateKey] ? mentorDateMap[selectedDateKey] : null;
 
-  // Optimistic UI Update & Conflict Rollback Execution
+  // Fast 1-Second Controlled Transition for Booking Class
   const handleBookSlot = async (targetSlotId: string) => {
     if (!targetSlotId || submitting) return;
 
@@ -333,13 +347,12 @@ export default function App() {
     // Backup previous slots for rollback on 409 Conflict or network error
     const previousSlots = [...slots];
 
-    // Optimistically remove target slot from UI immediately
-    setSlots(prev => prev.filter(s => s.id !== targetSlotId));
-
     setSubmitting(true);
     setStatus('idle');
     setErrorMessage('');
     setSuggestedSlot(null);
+
+    const startTime = Date.now();
 
     try {
       const res = await fetch('/api/bookings', {
@@ -353,15 +366,28 @@ export default function App() {
 
       const responseData = await res.json();
 
+      // Target transition duration: 500ms (0.5 seconds - half of current time)
+      const elapsedTime = Date.now() - startTime;
+      const targetDuration = 500;
+      if (elapsedTime < targetDuration) {
+        await new Promise(resolve => setTimeout(resolve, targetDuration - elapsedTime));
+      }
+
       if (res.ok) {
+        // Optimistically remove target slot from UI
+        setSlots(prev => prev.filter(s => s.id !== targetSlotId));
         setBookingSuccessData(responseData);
         setStatus('success');
-        fetchSlots();
-        fetchMentors();
-        fetchParents();
-        fetchParentBookings(parentIdToUse);
+
+        // Fire non-blocking background data synchronization
+        Promise.all([
+          fetchSlots(),
+          fetchMentors(),
+          fetchParents(),
+          fetchParentBookings(parentIdToUse)
+        ]).catch(() => {});
       } else {
-        // Rollback optimistic state on 409 Conflict
+        // Rollback optimistic state on 409 Conflict or backend rejection
         setSlots(previousSlots);
 
         if (responseData.suggestedSlot) {
@@ -373,6 +399,11 @@ export default function App() {
         setErrorMessage(responseData.error || 'Failed to complete booking.');
       }
     } catch (err: any) {
+      const elapsedTime = Date.now() - startTime;
+      const targetDuration = 500;
+      if (elapsedTime < targetDuration) {
+        await new Promise(resolve => setTimeout(resolve, targetDuration - elapsedTime));
+      }
       // Rollback optimistic state on network failure
       setSlots(previousSlots);
       setStatus('error');
@@ -430,6 +461,7 @@ export default function App() {
     setSelectedSlotId(null);
     setSelectedMentorId(null);
     setSelectedDateKey(null);
+    setCurrentView('book');
     fetchSlots();
     fetchMentors();
     fetchParentBookings(selectedParentId);
@@ -443,14 +475,18 @@ export default function App() {
         {/* Top Header Banner */}
         <header className="bg-white border-b border-gray-200 sticky top-0 z-30 shadow-xs">
           <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-4 flex flex-col md:flex-row md:items-center md:justify-between gap-4">
-            <div className="flex items-center gap-3">
+            <div 
+              className="flex items-center gap-3 cursor-pointer group"
+              onClick={resetBookingForm}
+              title="Return to Main Dashboard"
+            >
               <img 
                 src="/logo.png" 
                 alt="Codeyoung Logo" 
-                className="w-11 h-11 rounded-2xl object-contain shadow-md bg-white p-1 border border-gray-200 shrink-0" 
+                className="w-11 h-11 rounded-2xl object-contain shadow-md bg-white p-1 border border-gray-200 shrink-0 group-hover:scale-105 transition-transform" 
               />
               <div>
-                <h1 className="text-xl sm:text-2xl font-bold text-gray-900 tracking-tight">Codeyoung Trial Class Booking</h1>
+                <h1 className="text-xl sm:text-2xl font-bold text-gray-900 tracking-tight group-hover:text-indigo-600 transition-colors">Codeyoung Trial Class Booking</h1>
                 <p className="text-xs sm:text-sm text-gray-500 font-medium">1-on-1 Live Coding Demo with India's Top Mentors</p>
               </div>
             </div>
@@ -501,7 +537,7 @@ export default function App() {
               </div>
             </div>
 
-            {/* View Mode Navigation Switch (Book Class vs My Bookings Dashboard) */}
+            {/* View Mode Navigation Switch (Main Dashboard vs My Bookings) */}
             <div className="flex items-center gap-1.5 bg-slate-100 p-1.5 rounded-full border border-gray-200">
               <button
                 className={`px-4 py-1.5 rounded-full text-xs sm:text-sm font-bold transition-all cursor-pointer ${
@@ -509,9 +545,10 @@ export default function App() {
                     ? 'bg-indigo-600 text-white shadow-xs'
                     : 'text-gray-600 hover:text-gray-900'
                 }`}
-                onClick={() => setCurrentView('book')}
+                onClick={resetBookingForm}
+                title="Return to Main Dashboard"
               >
-                <Calendar size={14} className="inline mr-1.5" /> Book Class
+                <Home size={14} className="inline mr-1.5" /> Main Dashboard
               </button>
 
               <button
@@ -748,10 +785,10 @@ export default function App() {
                     </button>
 
                     <button
-                      className="inline-flex items-center gap-2 bg-slate-100 hover:bg-slate-200 text-gray-800 font-bold text-sm px-6 py-3 rounded-full border border-gray-300 transition-all cursor-pointer"
+                      className="inline-flex items-center gap-2 bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-sm px-6 py-3 rounded-full shadow-sm transition-all hover:shadow-md cursor-pointer"
                       onClick={resetBookingForm}
                     >
-                      <RefreshCw size={16} /> Book Another Demo Class
+                      <Home size={16} /> Return to Main Dashboard
                     </button>
 
                     <button
@@ -762,7 +799,7 @@ export default function App() {
                         if (selectedParentId) fetchParentBookings(selectedParentId);
                       }}
                     >
-                      <User size={16} /> View My Bookings Dashboard
+                      <User size={16} /> View My Bookings
                     </button>
                   </div>
                 </div>

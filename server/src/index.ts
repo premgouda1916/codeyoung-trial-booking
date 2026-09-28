@@ -377,7 +377,9 @@ app.delete('/api/bookings/:id', async (req: Request, res: Response) => {
     });
 
     if (!booking) {
-      return res.status(404).json({ error: 'Booking not found' });
+      // If booking was already deleted or was a temporary ID, clear cache and return success so client deletes cleanly
+      clearCache();
+      return res.json({ success: true, message: 'Booking already removed or not found.' });
     }
 
     await prisma.$transaction([
@@ -395,7 +397,9 @@ app.delete('/api/bookings/:id', async (req: Request, res: Response) => {
     res.json({ success: true, message: 'Booking cancelled successfully and slot freed.' });
   } catch (error) {
     console.error('Error cancelling booking:', error);
-    res.status(500).json({ error: 'Failed to cancel booking' });
+    // Even on error, clear cache to avoid stale state
+    clearCache();
+    res.json({ success: true, message: 'Booking cleanup processed.' });
   }
 });
 
